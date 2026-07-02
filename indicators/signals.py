@@ -146,7 +146,7 @@ def generate_signals(df: pd.DataFrame, oi_series: pd.Series = None) -> pd.DataFr
         oi_aligned = oi_series.reindex(df.index, method="nearest", tolerance=pd.Timedelta("2d"))
         if oi_aligned.notna().sum() > 10:
             df["oi"]       = oi_aligned
-            df["oi_ema"]   = ta.trend.ema_indicator(df["oi"].fillna(method="ffill"), window=10)
+            df["oi_ema"]   = ta.trend.ema_indicator(df["oi"].ffill(), window=10)
             df["oi_rising"] = (df["oi"] > df["oi_ema"]).astype(float)
             has_oi = True
 
