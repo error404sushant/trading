@@ -149,7 +149,7 @@ for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
             ("screener_last", {}),("screener_new_alerts",[]),
-            ("bybit_auto_trade", False),("bybit_qty", 0.001),("bybit_last_order", {})]:
+            ("bybit_auto_trade", True),("bybit_qty", 0.001),("bybit_last_order", {})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -322,18 +322,14 @@ with st.sidebar:
 
         bybit_panel()
 
-        st.session_state.bybit_auto_trade = st.toggle(
-            "⚡ Auto-Trade on Signal", value=st.session_state.bybit_auto_trade,
-            help="Automatically place a Bybit perpetual order when a signal fires"
-        )
-        if st.session_state.bybit_auto_trade:
-            st.markdown("""
-            <div style="background:#fff7ed;border:1px solid #f59e0b;border-radius:8px;
-                 padding:10px 12px;font-size:0.78rem;color:#92400e;">
-              <b>⚡ Auto-trade ON</b><br>
-              Uses <b>10% of balance</b> × <b>2× leverage</b> per trade.<br>
-              Qty is calculated automatically at signal time.
-            </div>""", unsafe_allow_html=True)
+        st.session_state.bybit_auto_trade = True
+        st.markdown("""
+        <div style="background:#f0fff4;border:1px solid #22c55e;border-radius:8px;
+             padding:10px 12px;font-size:0.78rem;color:#15803d;">
+          <b>⚡ Auto-Trade: ALWAYS ON</b><br>
+          10% of balance × 2× leverage per signal.<br>
+          Qty auto-calculated at entry time.
+        </div>""", unsafe_allow_html=True)
 
         st.divider()
 
@@ -371,7 +367,7 @@ if (not needs_load and not auto_opt and st.session_state.df is not None):
         st.session_state.backtest_key = manual_bt_key
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "📡 Screener"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "📡 Screener", "🟡 Bybit"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIGNAL + CHART TAB
@@ -1215,3 +1211,155 @@ with tab4:
         st.dataframe(pd.DataFrame(alert_rows), use_container_width=True, height=300)
     else:
         st.caption("No alerts fired yet — signals will appear here as they trigger.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BYBIT TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab5:
+    st.markdown("## 🟡 Bybit Demo Trading")
+
+    if not is_configured():
+        st.warning("Bybit API not configured. Add keys to .env file.")
+    else:
+        @st.fragment(run_every=10)
+        def bybit_tab_content():
+            # ── Balance ───────────────────────────────────────────────────────
+            bal = get_balance()
+            c1, c2, c3 = st.columns(3)
+            if bal["ok"]:
+                pnl_c = "#16a34a" if bal["unrealised_pnl"] >= 0 else "#dc2626"
+                with c1:
+                    st.markdown(f"""<div class="lvl" style="border-top:3px solid #f59e0b;">
+                      <div class="lvl-lbl">💰 USDT Balance</div>
+                      <div class="lvl-val" style="color:#111827;">${bal['equity']:,.2f}</div>
+                    </div>""", unsafe_allow_html=True)
+                with c2:
+                    st.markdown(f"""<div class="lvl" style="border-top:3px solid #f59e0b;">
+                      <div class="lvl-lbl">💵 Available</div>
+                      <div class="lvl-val" style="color:#111827;">${bal['available']:,.2f}</div>
+                    </div>""", unsafe_allow_html=True)
+                with c3:
+                    st.markdown(f"""<div class="lvl" style="border-top:3px solid {pnl_c};">
+                      <div class="lvl-lbl">📈 Unrealised PnL</div>
+                      <div class="lvl-val" style="color:{pnl_c};">{'+' if bal['unrealised_pnl']>=0 else ''}{bal['unrealised_pnl']:.2f}</div>
+                    </div>""", unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Live Positions ────────────────────────────────────────────────
+            st.markdown("### 📌 Live Open Positions")
+            positions = get_positions()
+            if positions:
+                for p in positions:
+                    pnl     = p["unrealised_pnl"]
+                    pnl_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"] * 100
+                    if p["side"] == "Sell":
+                        pnl_pct = -pnl_pct
+                    pc  = "#16a34a" if pnl >= 0 else "#dc2626"
+                    bg  = "#f0fff4" if pnl >= 0 else "#fff5f5"
+                    bc  = "#22c55e" if pnl >= 0 else "#ef4444"
+                    tag = "▲ LONG" if p["side"] == "Buy" else "▼ SHORT"
+                    tag_c = "#16a34a" if p["side"] == "Buy" else "#dc2626"
+
+                    col_info, col_btn = st.columns([5, 1])
+                    with col_info:
+                        st.markdown(f"""
+                        <div style="background:{bg};border-left:5px solid {bc};border-radius:10px;
+                             padding:14px 16px;margin-bottom:8px;">
+                          <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                            <span style="font-size:1.1rem;font-weight:900;color:#111827;">{p['symbol']}</span>
+                            <span style="font-size:1.3rem;font-weight:900;color:{pc};">{pnl_pct:+.2f}%</span>
+                          </div>
+                          <div style="display:flex;justify-content:space-between;margin-top:4px;">
+                            <span style="font-weight:700;color:{tag_c};font-size:0.82rem;">{tag} · Size {p['size']}</span>
+                            <span style="font-weight:700;color:{pc};font-size:0.82rem;">{'+' if pnl>=0 else ''}{pnl:.2f} USDT</span>
+                          </div>
+                          <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.78rem;color:#374151;">
+                            <span>Entry: <b>${p['entry_price']:,.4f}</b></span>
+                            <span>Mark: <b>${p['mark_price']:,.4f}</b></span>
+                            <span>Leverage: <b>{p['leverage']:.0f}×</b></span>
+                          </div>
+                          <div style="display:flex;gap:16px;margin-top:4px;font-size:0.72rem;">
+                            <span style="color:#dc2626;">🛑 SL: ${p['sl']:,.4f}</span>
+                            <span style="color:#16a34a;">🎯 TP: ${p['tp']:,.4f}</span>
+                          </div>
+                        </div>""", unsafe_allow_html=True)
+                    with col_btn:
+                        st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
+                        from data.bybit_client import SYMBOL_MAP
+                        yf_sym = next((k for k,v in SYMBOL_MAP.items() if v == p["symbol"]), None)
+                        if yf_sym and st.button("Close", key=f"bybit_close_{p['symbol']}", type="primary"):
+                            res = close_position(yf_sym)
+                            if res["ok"]:
+                                st.success("✅ Position closed!")
+                            else:
+                                st.error(f"❌ {res['error']}")
+                            st.rerun()
+            else:
+                st.markdown("""
+                <div style="text-align:center;padding:30px;background:#f8f9fc;
+                     border:1px dashed #e0e4ef;border-radius:12px;color:#6b7280;">
+                  <div style="font-size:2rem;">📭</div>
+                  <div style="margin-top:8px;font-weight:600;">No open positions</div>
+                  <div style="font-size:0.82rem;margin-top:4px;">
+                    Auto-trade is ON — a position will open automatically when the next signal fires
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            st.markdown("---")
+
+            # ── Past Trades ───────────────────────────────────────────────────
+            st.markdown("### 📒 Past Trades (Closed PnL)")
+            history = get_trade_history(limit=30)
+            if history:
+                total_pnl = sum(h["pnl"] for h in history)
+                wins      = sum(1 for h in history if h["won"])
+                wr        = wins / len(history) * 100 if history else 0
+
+                mc1, mc2, mc3 = st.columns(3)
+                for col, val, lbl, ok in [
+                    (mc1, f"{wr:.1f}%",          "Win Rate",  wr >= 50),
+                    (mc2, str(len(history)),       "Trades",    True),
+                    (mc3, f"{total_pnl:+.2f} USDT","Total PnL", total_pnl >= 0),
+                ]:
+                    color = "#16a34a" if ok else "#dc2626"
+                    with col:
+                        st.markdown(f"""<div class="lvl">
+                          <div class="lvl-lbl">{lbl}</div>
+                          <div class="lvl-val" style="color:{color};font-size:1.1rem;">{val}</div>
+                        </div>""", unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                rows = []
+                for h in history:
+                    ts = h["created_at"]
+                    try:
+                        ts = pd.to_datetime(int(ts), unit="ms").strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        ts = str(ts)[:16]
+                    rows.append({
+                        "Time":    ts,
+                        "Symbol":  h["symbol"],
+                        "Side":    "🟢 LONG" if h["side"] == "Buy" else "🔴 SHORT",
+                        "Qty":     h["qty"],
+                        "Entry $": f"${h['entry']:,.4f}",
+                        "Exit $":  f"${h['exit']:,.4f}",
+                        "PnL":     f"{'+' if h['pnl']>=0 else ''}{h['pnl']:.4f} USDT",
+                        "Result":  "✅ WIN" if h["won"] else "❌ LOSS",
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, height=400)
+            else:
+                st.markdown("""
+                <div style="text-align:center;padding:30px;background:#f8f9fc;
+                     border:1px dashed #e0e4ef;border-radius:12px;color:#6b7280;">
+                  <div style="font-size:2rem;">📊</div>
+                  <div style="margin-top:8px;font-weight:600;">No completed trades yet</div>
+                  <div style="font-size:0.82rem;margin-top:4px;">
+                    Past trades appear here after SL or TP is hit on Bybit
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            st.markdown("---")
+            st.caption("🔄 Auto-refreshes every 10 seconds · 2× leverage · 10% balance per trade · Bybit Demo")
+
+        bybit_tab_content()
