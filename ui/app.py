@@ -18,11 +18,13 @@ init_screener()
 
 # ── Popular tickers for autocomplete ─────────────────────────────────────────
 POPULAR = {
-    "Crypto":   ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"],
-    "US Stocks":["AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","META","NFLX","AMD","INTC","JPM","BAC","V","MA","WMT"],
-    "Indices":  ["^GSPC","^DJI","^IXIC","^NSEI","^BSESN","^FTSE","^N225","^HSI"],
-    "Forex":    ["EURUSD=X","GBPUSD=X","USDJPY=X","AUDUSD=X","USDCAD=X","USDINR=X"],
-    "Commodities":["GC=F","SI=F","CL=F","NG=F","ZW=F"],
+    "Crypto":      ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"],
+    "Metals":      ["GC=F","SI=F","PL=F","PA=F","HG=F"],
+    "Energy":      ["CL=F","BZ=F","NG=F","RB=F"],
+    "US Stocks":   ["AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","META","NFLX","AMD","INTC","JPM","BAC","V","MA","WMT"],
+    "Indices":     ["^GSPC","^DJI","^IXIC","^NSEI","^BSESN","^FTSE","^N225","^HSI"],
+    "Forex":       ["EURUSD=X","GBPUSD=X","USDJPY=X","AUDUSD=X","USDCAD=X","USDINR=X"],
+    "Commodities": ["ZW=F","ZC=F","ZS=F","KC=F","CT=F"],
 }
 ALL_TICKERS = [t for group in POPULAR.values() for t in group]
 
@@ -39,7 +41,10 @@ TV_SYMBOL_MAP = {
     "^NSEI":"NSE:NIFTY50","^BSESN":"BSE:SENSEX","^FTSE":"LSE:UKX","^N225":"TVC:NI225",
     "EURUSD=X":"FX:EURUSD","GBPUSD=X":"FX:GBPUSD","USDJPY=X":"FX:USDJPY",
     "AUDUSD=X":"FX:AUDUSD","USDCAD=X":"FX:USDCAD","USDINR=X":"FX:USDINR",
-    "GC=F":"TVC:GOLD","SI=F":"TVC:SILVER","CL=F":"TVC:USOIL","NG=F":"TVC:NATURALGAS",
+    "GC=F":"TVC:GOLD","SI=F":"TVC:SILVER","PL=F":"TVC:PLATINUM","PA=F":"TVC:PALLADIUM",
+    "HG=F":"TVC:COPPER","CL=F":"TVC:USOIL","BZ=F":"TVC:UKOIL","NG=F":"TVC:NATURALGAS",
+    "RB=F":"NYMEX:RB1!","ZW=F":"CBOT:ZW1!","ZC=F":"CBOT:ZC1!","ZS=F":"CBOT:ZS1!",
+    "KC=F":"ICEUS:KC1!","CT=F":"ICEUS:CT1!",
 }
 
 def get_tv_symbol(ticker: str) -> str:
@@ -121,7 +126,6 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 # ── Session state ─────────────────────────────────────────────────────────────
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
-            ("sl_slider",2.0),("tp_slider",4.0),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
             ("screener_last", {}),("screener_new_alerts",[])]:
     if k not in st.session_state:
@@ -214,7 +218,7 @@ with st.sidebar:
 
     # Popular picker
     for category, tickers in POPULAR.items():
-        with st.expander(category, expanded=(category == "Crypto")):
+        with st.expander(category, expanded=(category in ("Crypto", "Metals"))):
             cols = st.columns(2)
             for i, t in enumerate(tickers):
                 is_active = (t == st.session_state.ticker)
@@ -229,10 +233,12 @@ with st.sidebar:
     st.session_state.tf = timeframe
     auto_opt = st.checkbox("Auto-optimize SL/TP", value=True)
     c_sl, c_tp = st.columns(2)
-    sl_pct = c_sl.slider("SL %",  0.5, 10.0, step=0.5, key="sl_slider",
+    sl_pct = c_sl.slider("SL %",  0.5, 10.0,
+                          value=float(st.session_state.opt_sl), step=0.5,
                           disabled=auto_opt,
-                          help="Stop Loss — move slider to test different ratios")
-    tp_pct = c_tp.slider("TP %", 1.0, 20.0, step=0.5, key="tp_slider",
+                          help="Stop Loss — uncheck Auto-optimize to adjust")
+    tp_pct = c_tp.slider("TP %", 1.0, 20.0,
+                          value=float(st.session_state.opt_tp), step=0.5,
                           disabled=auto_opt,
                           help="Take Profit — backtest updates automatically")
     if auto_opt:
@@ -276,11 +282,9 @@ with tab1:
                 if opt["result"]:
                     new_sl = opt["params"]["stop_loss_pct"]
                     new_tp = opt["params"]["take_profit_pct"]
-                    st.session_state.opt_sl    = new_sl
-                    st.session_state.opt_tp    = new_tp
-                    st.session_state.sl_slider = new_sl
-                    st.session_state.tp_slider = new_tp
-                    st.session_state.result    = opt["result"]
+                    st.session_state.opt_sl       = new_sl
+                    st.session_state.opt_tp       = new_tp
+                    st.session_state.result       = opt["result"]
                     st.session_state.backtest_key = f"{ticker}|{timeframe}|{new_sl}|{new_tp}"
             else:
                 st.session_state.opt_sl    = sl_pct
