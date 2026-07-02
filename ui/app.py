@@ -120,7 +120,8 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
-            ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),
+            ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
+            ("sl_slider",2.0),("tp_slider",4.0),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
             ("screener_last", {}),("screener_new_alerts",[])]:
     if k not in st.session_state:
@@ -226,11 +227,15 @@ with st.sidebar:
     timeframe = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
                              index=6, key="tf_select")
     st.session_state.tf = timeframe
-    auto_opt  = st.checkbox("Auto-optimize SL/TP", value=True)
-    if not auto_opt:
-        sl_pct = st.slider("Stop Loss %",  0.5, 10.0, 2.0, 0.5)
-        tp_pct = st.slider("Take Profit %", 1.0, 20.0, 4.0, 0.5)
-    else:
+    auto_opt = st.checkbox("Auto-optimize SL/TP", value=True)
+    c_sl, c_tp = st.columns(2)
+    sl_pct = c_sl.slider("SL %",  0.5, 10.0, step=0.5, key="sl_slider",
+                          disabled=auto_opt,
+                          help="Stop Loss — move slider to test different ratios")
+    tp_pct = c_tp.slider("TP %", 1.0, 20.0, step=0.5, key="tp_slider",
+                          disabled=auto_opt,
+                          help="Take Profit — backtest updates automatically")
+    if auto_opt:
         sl_pct = st.session_state.opt_sl
         tp_pct = st.session_state.opt_tp
 
@@ -240,6 +245,15 @@ timeframe = st.session_state.tf
 # ── Auto-load whenever ticker or timeframe changes (no button needed) ─────────
 current_key = f"{ticker}|{timeframe}"
 needs_load  = (current_key != st.session_state.loaded_key)
+
+# ── Re-run backtest when user manually changes SL/TP (auto_opt OFF only) ──────
+if (not needs_load and not auto_opt and st.session_state.df is not None):
+    manual_bt_key = f"{ticker}|{timeframe}|{sl_pct}|{tp_pct}"
+    if manual_bt_key != st.session_state.backtest_key:
+        st.session_state.result      = run_backtest(st.session_state.df, sl_pct, tp_pct)
+        st.session_state.opt_sl      = sl_pct
+        st.session_state.opt_tp      = tp_pct
+        st.session_state.backtest_key = manual_bt_key
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "📡 Screener"])
@@ -260,13 +274,19 @@ with tab1:
                 with st.spinner("Optimizing SL/TP…"):
                     opt = optimize(df)
                 if opt["result"]:
-                    st.session_state.opt_sl = opt["params"]["stop_loss_pct"]
-                    st.session_state.opt_tp = opt["params"]["take_profit_pct"]
-                    st.session_state.result = opt["result"]
+                    new_sl = opt["params"]["stop_loss_pct"]
+                    new_tp = opt["params"]["take_profit_pct"]
+                    st.session_state.opt_sl    = new_sl
+                    st.session_state.opt_tp    = new_tp
+                    st.session_state.sl_slider = new_sl
+                    st.session_state.tp_slider = new_tp
+                    st.session_state.result    = opt["result"]
+                    st.session_state.backtest_key = f"{ticker}|{timeframe}|{new_sl}|{new_tp}"
             else:
-                st.session_state.opt_sl = sl_pct
-                st.session_state.opt_tp = tp_pct
-                st.session_state.result = run_backtest(df, sl_pct, tp_pct)
+                st.session_state.opt_sl    = sl_pct
+                st.session_state.opt_tp    = tp_pct
+                st.session_state.result    = run_backtest(df, sl_pct, tp_pct)
+                st.session_state.backtest_key = f"{ticker}|{timeframe}|{sl_pct}|{tp_pct}"
         except Exception as e:
             st.error(f"Could not load **{ticker}**: {e}")
             st.info("Try: BTC-USD, ETH-USD, AAPL, TSLA, EURUSD=X, GC=F")
