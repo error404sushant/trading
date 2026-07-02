@@ -296,12 +296,14 @@ with tab1:
             st.info("Try: BTC-USD, ETH-USD, AAPL, TSLA, EURUSD=X, GC=F")
 
     if st.session_state.df is not None:
-        df      = st.session_state.df
-        last    = df.iloc[-1]
-        sig     = int(last["signal"])
-        used_sl = st.session_state.opt_sl
-        used_tp = st.session_state.opt_tp
-        score   = last["score"]
+        df         = st.session_state.df
+        last       = df.iloc[-1]
+        sig        = int(last["signal"])
+        used_sl    = st.session_state.opt_sl
+        used_tp    = st.session_state.opt_tp
+        score      = last["score"]
+        votes      = int(last.get("votes", 0))
+        confidence = float(last.get("confidence", abs(score) * 100))
         # Use live price for trade level calculations
         _live   = get_live_price(ticker)
         price   = _live["price"] if _live["price"] > 0 else last["close"]
@@ -327,15 +329,24 @@ with tab1:
         col_sig, col_price = st.columns([3, 1])
 
         with col_sig:
+            conf_label = "Very High" if confidence >= 75 else "High" if confidence >= 60 else "Medium" if confidence >= 45 else "Low"
             if sig == 1:
                 st.markdown(f"""<div class="sig-long">
                   <div class="sig-type" style="color:#16a34a;">🟢 &nbsp;LONG</div>
-                  <div class="sig-sub">Strong buy signal &nbsp;·&nbsp; Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%</div>
+                  <div class="sig-sub">
+                    Confidence <b>{confidence:.0f}%</b> ({conf_label}) &nbsp;·&nbsp;
+                    {votes} / 12 systems agree &nbsp;·&nbsp;
+                    Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%
+                  </div>
                 </div>""", unsafe_allow_html=True)
             elif sig == -1:
                 st.markdown(f"""<div class="sig-short">
                   <div class="sig-type" style="color:#dc2626;">🔴 &nbsp;SHORT</div>
-                  <div class="sig-sub">Strong sell signal &nbsp;·&nbsp; Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%</div>
+                  <div class="sig-sub">
+                    Confidence <b>{confidence:.0f}%</b> ({conf_label}) &nbsp;·&nbsp;
+                    {abs(votes)} / 12 systems agree &nbsp;·&nbsp;
+                    Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%
+                  </div>
                 </div>""", unsafe_allow_html=True)
             else:
                 reasons = []
@@ -343,12 +354,15 @@ with tab1:
                 if 40 < last["rsi"] < 60:      reasons.append(f"RSI {last['rsi']:.0f} — neutral zone")
                 if last["macd"] > last["macd_signal"] and last["ema_9"] < last["ema_21"]:
                     reasons.append("MACD & EMA conflict")
-                if abs(score) < 0.4:           reasons.append(f"Score {score:.2f} too weak")
+                if abs(votes) < 5:             reasons.append(f"Only {abs(votes)}/12 systems agree — need 5+")
+                if abs(score) < 0.45:          reasons.append(f"Score {score:.2f} below threshold")
                 reason = " · ".join(reasons) if reasons else f"Score {score:.2f} — indicators not aligned"
                 st.markdown(f"""<div class="sig-none">
                   <div class="sig-type" style="color:#d97706;">⚠️ &nbsp;NO SIGNAL</div>
                   <div class="sig-sub">Not a good time to trade &nbsp;·&nbsp; {reason}</div>
-                  <div style="font-size:0.78rem;color:#9ca3af;margin-top:8px;">Wait for a cleaner setup or try a different timeframe.</div>
+                  <div style="font-size:0.78rem;color:#9ca3af;margin-top:8px;">
+                    {abs(votes)} / 12 analytical systems firing &nbsp;·&nbsp; Wait for 5+ to align.
+                  </div>
                 </div>""", unsafe_allow_html=True)
 
         with col_price:
@@ -433,24 +447,44 @@ with tab1:
                   <div class="lvl-sub" style="color:{rc};">{'Excellent' if rr>=2.5 else 'Good' if rr>=2 else 'OK' if rr>=1.5 else 'Poor'}</div>
                 </div>""", unsafe_allow_html=True)
 
-        # ── Indicator chips ───────────────────────────────────────────────────
+        # ── Indicator chips — 12-system Wall Street dashboard ─────────────────
         st.markdown("<br>", unsafe_allow_html=True)
-        i1,i2,i3,i4,i5,i6 = st.columns(6)
-        for col, lbl, val, ok in [
-            (i1,"RSI",  f"{last['rsi']:.0f}",    30<last['rsi']<70),
-            (i2,"ADX",  f"{last['adx']:.0f}",    last['adx']>25),
-            (i3,"MACD", "Bull" if last['macd']>last['macd_signal'] else "Bear", last['macd']>last['macd_signal']),
-            (i4,"EMA 9/21","Bull" if last['ema_9']>last['ema_21'] else "Bear", last['ema_9']>last['ema_21']),
-            (i5,"Stoch",f"{last['stoch_k']:.0f}", 20<last['stoch_k']<80),
-            (i6,"BB %", f"{last['bb_pct']:.2f}",  0.2<last['bb_pct']<0.8),
-        ]:
-            icon  = "🟢" if ok else "🔴"
-            color = "#16a34a" if ok else "#dc2626"
-            with col:
-                st.markdown(f"""<div class="chip">
-                  <div class="chip-val" style="color:{color};">{icon} {val}</div>
-                  <div class="chip-lbl">{lbl}</div>
-                </div>""", unsafe_allow_html=True)
+
+        # Ichimoku cloud position
+        cloud_top_val    = max(float(last.get("ichi_a", 0)), float(last.get("ichi_b", 0)))
+        cloud_bottom_val = min(float(last.get("ichi_a", 0)), float(last.get("ichi_b", 0)))
+        above_cloud = float(last["close"]) > cloud_top_val if cloud_top_val > 0 else False
+        ichi_label  = "Above ☁" if above_cloud else ("In ☁" if float(last["close"]) > cloud_bottom_val else "Below ☁")
+
+        # Volume ratio
+        vol_r = float(last.get("vol_ratio", 1.0))
+
+        chips = [
+            ("RSI",        f"{last['rsi']:.0f}",                       50 < last['rsi'] < 70),
+            ("ADX+DI",     f"+{last['adx_pos']:.0f}/−{last['adx_neg']:.0f}", last['adx'] > 25 and last['adx_pos'] > last['adx_neg']),
+            ("MACD",       "Bull" if last['macd'] > last['macd_signal'] else "Bear", last['macd'] > last['macd_signal']),
+            ("EMA Stack",  "Aligned" if last['ema_9'] > last['ema_21'] > last['ema_50'] else "Broken", last['ema_9'] > last['ema_21'] > last['ema_50']),
+            ("EMA 200",    "Above" if last['close'] > last['ema_200'] else "Below", last['close'] > last['ema_200']),
+            ("Stoch",      f"{last['stoch_k']:.0f}",                    20 < last['stoch_k'] < 80),
+            ("CCI",        f"{last.get('cci', 0):.0f}",                 -100 < last.get('cci', 0) < 100),
+            ("Ichimoku",   ichi_label,                                   above_cloud),
+            ("Vol Ratio",  f"{vol_r:.1f}×",                             vol_r > 1.2),
+            ("OBV",        "Rising" if last.get("obv", 0) > last.get("obv_ema", 0) else "Falling", last.get("obv", 0) > last.get("obv_ema", 0)),
+            ("RSI Div",    "Bull Div" if last.get("rsi_bull_div", 0) else ("Bear Div" if last.get("rsi_bear_div", 0) else "None"), last.get("rsi_bull_div", 0) == 1),
+            ("Confluence", f"{abs(votes)}/12",                           abs(votes) >= 5),
+        ]
+        rows = [chips[:6], chips[6:]]
+        for row in rows:
+            cols = st.columns(len(row))
+            for col, (lbl, val, ok) in zip(cols, row):
+                icon  = "🟢" if ok else "🔴"
+                color = "#16a34a" if ok else "#dc2626"
+                with col:
+                    st.markdown(f"""<div class="chip">
+                      <div class="chip-val" style="color:{color};">{icon} {val}</div>
+                      <div class="chip-lbl">{lbl}</div>
+                    </div>""", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
