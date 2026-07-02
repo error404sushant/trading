@@ -11,7 +11,8 @@ from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_a
 from data.screener_store import (init_screener, add_ticker, remove_ticker,
                                   get_watchlist, log_alert, get_recent_alerts)
 from data.bybit_client import (is_configured, get_balance, get_positions,
-                                place_order, close_position, get_bybit_symbol, get_min_qty)
+                                place_order, close_position, get_bybit_symbol,
+                                get_min_qty, calc_qty, get_trade_history)
 from indicators.signals import generate_signals
 from backtest.engine import run_backtest
 from backtest.optimizer import optimize
@@ -326,12 +327,13 @@ with st.sidebar:
             help="Automatically place a Bybit perpetual order when a signal fires"
         )
         if st.session_state.bybit_auto_trade:
-            st.session_state.bybit_qty = st.number_input(
-                "Qty (base coin)", min_value=0.001, max_value=10.0,
-                value=float(st.session_state.bybit_qty), step=0.001, format="%.3f",
-                help="How many coins to buy/sell per signal. Start small!"
-            )
-            st.warning("⚡ Auto-trade ON — signals will place real demo orders")
+            st.markdown("""
+            <div style="background:#fff7ed;border:1px solid #f59e0b;border-radius:8px;
+                 padding:10px 12px;font-size:0.78rem;color:#92400e;">
+              <b>⚡ Auto-trade ON</b><br>
+              Uses <b>10% of balance</b> × <b>2× leverage</b> per trade.<br>
+              Qty is calculated automatically at signal time.
+            </div>""", unsafe_allow_html=True)
 
         st.divider()
 
@@ -425,13 +427,16 @@ with tab1:
             if is_new and st.session_state.get("bybit_auto_trade") and get_bybit_symbol(ticker):
                 order_key = f"{ticker}|LONG|{price:.2f}"
                 if st.session_state.bybit_last_order.get(ticker) != order_key:
-                    qty = st.session_state.bybit_qty
-                    res = place_order(ticker, "LONG", qty, sl_p, tp_p)
-                    st.session_state.bybit_last_order[ticker] = order_key
-                    if res["ok"]:
-                        st.toast(f"✅ Bybit LONG placed — {ticker} qty {qty}", icon="🟢")
+                    qty = calc_qty(ticker, price, balance_pct=0.10, leverage=2)
+                    if qty > 0:
+                        res = place_order(ticker, "LONG", qty, sl_p, tp_p, leverage=2)
+                        st.session_state.bybit_last_order[ticker] = order_key
+                        if res["ok"]:
+                            st.toast(f"✅ Bybit LONG — {ticker} qty {qty:.4f} (10% bal × 2×)", icon="🟢")
+                        else:
+                            st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
                     else:
-                        st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
+                        st.toast(f"❌ Could not calculate qty for {ticker}", icon="🔴")
         elif sig == -1 and price > 0:
             sl_p = price * (1 + used_sl / 100)
             tp_p = price * (1 - used_tp / 100)
@@ -440,13 +445,16 @@ with tab1:
             if is_new and st.session_state.get("bybit_auto_trade") and get_bybit_symbol(ticker):
                 order_key = f"{ticker}|SHORT|{price:.2f}"
                 if st.session_state.bybit_last_order.get(ticker) != order_key:
-                    qty = st.session_state.bybit_qty
-                    res = place_order(ticker, "SHORT", qty, sl_p, tp_p)
-                    st.session_state.bybit_last_order[ticker] = order_key
-                    if res["ok"]:
-                        st.toast(f"✅ Bybit SHORT placed — {ticker} qty {qty}", icon="🔴")
+                    qty = calc_qty(ticker, price, balance_pct=0.10, leverage=2)
+                    if qty > 0:
+                        res = place_order(ticker, "SHORT", qty, sl_p, tp_p, leverage=2)
+                        st.session_state.bybit_last_order[ticker] = order_key
+                        if res["ok"]:
+                            st.toast(f"✅ Bybit SHORT — {ticker} qty {qty:.4f} (10% bal × 2×)", icon="🔴")
+                        else:
+                            st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
                     else:
-                        st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
+                        st.toast(f"❌ Could not calculate qty for {ticker}", icon="🔴")
 
         # Auto-close if SL/TP hit
         db_trade = get_open_trade(ticker, timeframe)
@@ -846,7 +854,59 @@ with tab2:
 
         st.markdown("---")
 
-        # ── Section 1: Real signal trades from DB ─────────────────────────────
+        # ── Section 1: Bybit Live Positions ──────────────────────────────────
+        if is_configured():
+            st.markdown("### 🟡 Bybit Live Positions")
+            bybit_pos = get_positions()
+            if bybit_pos:
+                pos_rows = []
+                for p in bybit_pos:
+                    pnl_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"] * 100
+                    if p["side"] == "Sell":
+                        pnl_pct = -pnl_pct
+                    pos_rows.append({
+                        "Symbol":    p["symbol"],
+                        "Side":      "🟢 LONG" if p["side"] == "Buy" else "🔴 SHORT",
+                        "Size":      p["size"],
+                        "Entry $":   f"${p['entry_price']:,.4f}",
+                        "Mark $":    f"${p['mark_price']:,.4f}",
+                        "PnL $":     f"{'+' if p['unrealised_pnl']>=0 else ''}{p['unrealised_pnl']:.2f}",
+                        "PnL %":     f"{pnl_pct:+.2f}%",
+                        "SL $":      f"${p['sl']:,.4f}" if p['sl'] > 0 else "—",
+                        "TP $":      f"${p['tp']:,.4f}" if p['tp'] > 0 else "—",
+                        "Leverage":  f"{p['leverage']:.0f}×",
+                    })
+                st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, height=200)
+            else:
+                st.caption("No open Bybit positions.")
+
+            # ── Bybit Past Trades ─────────────────────────────────────────────
+            st.markdown("### 📒 Bybit Past Trades")
+            history = get_trade_history(limit=30)
+            if history:
+                hist_rows_b = []
+                for h in history:
+                    ts = h["created_at"]
+                    try:
+                        ts = pd.to_datetime(int(ts), unit="ms").strftime("%Y-%m-%d %H:%M")
+                    except Exception:
+                        ts = str(ts)[:16]
+                    hist_rows_b.append({
+                        "Time":    ts,
+                        "Symbol":  h["symbol"],
+                        "Side":    "🟢 LONG" if h["side"] == "Buy" else "🔴 SHORT",
+                        "Qty":     h["qty"],
+                        "Entry $": f"${h['entry']:,.4f}",
+                        "Exit $":  f"${h['exit']:,.4f}",
+                        "PnL $":   f"{'+' if h['pnl']>=0 else ''}{h['pnl']:.4f}",
+                        "Result":  "✅ WIN" if h["won"] else "❌ LOSS",
+                    })
+                st.dataframe(pd.DataFrame(hist_rows_b), use_container_width=True, height=250)
+            else:
+                st.caption("No past Bybit trades yet — trades appear here after they close.")
+            st.markdown("---")
+
+        # ── Section 2: Real signal trades from DB ─────────────────────────────
         st.markdown("### 🔴 My Trades (Real Signals)")
         db_trades = get_all_trades(ticker, timeframe, limit=200)
         live_p    = get_live_price(ticker)["price"] if db_trades else 0

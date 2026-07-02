@@ -115,16 +115,81 @@ def get_positions() -> list:
         return []
 
 
+def set_leverage(yf_ticker: str, leverage: int = 2) -> dict:
+    """Set leverage for a symbol. Called before placing order."""
+    symbol = get_bybit_symbol(yf_ticker)
+    if not symbol:
+        return {"ok": False, "error": "Symbol not found"}
+    session, err = _get_session()
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        r = session.set_leverage(
+            category="linear",
+            symbol=symbol,
+            buyLeverage=str(leverage),
+            sellLeverage=str(leverage),
+        )
+        # retCode 110043 = leverage not modified (already set) — that's fine
+        if r["retCode"] in (0, 110043):
+            return {"ok": True}
+        return {"ok": False, "error": r.get("retMsg", "Unknown")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def calc_qty(yf_ticker: str, price: float, balance_pct: float = 0.10, leverage: int = 2) -> float:
+    """
+    Calculate order quantity using % of balance × leverage.
+    balance_pct=0.10 means use 10% of available USDT.
+    Returns qty rounded to exchange step size.
+    """
+    bal = get_balance()
+    if not bal["ok"] or bal["equity"] <= 0:
+        return 0.0
+
+    usdt_to_use    = bal["equity"] * balance_pct   # 10% of balance
+    position_value = usdt_to_use * leverage         # × 2x leverage
+    raw_qty        = position_value / price
+
+    # Get step size from exchange
+    step = get_qty_step(yf_ticker)
+    if step <= 0:
+        step = 0.001
+
+    # Round DOWN to nearest step
+    qty = int(raw_qty / step) * step
+    qty = round(qty, 8)
+    return max(qty, step)   # at least minimum step
+
+
+def get_qty_step(yf_ticker: str) -> float:
+    """Get the qty step size for a symbol (e.g. 0.001 for BTC)."""
+    symbol = get_bybit_symbol(yf_ticker)
+    if not symbol:
+        return 0.001
+    session, err = _get_session()
+    if err:
+        return 0.001
+    try:
+        r = session.get_instruments_info(category="linear", symbol=symbol)
+        info = r["result"]["list"][0]["lotSizeFilter"]
+        return float(info.get("qtyStep", 0.001))
+    except Exception:
+        return 0.001
+
+
 def place_order(
     yf_ticker: str,
-    direction: str,      # "LONG" or "SHORT"
-    qty: float,          # quantity in base currency (e.g. 0.01 BTC)
+    direction: str,    # "LONG" or "SHORT"
+    qty: float,
     sl_price: float,
     tp_price: float,
+    leverage: int = 2,
 ) -> dict:
     """
-    Place a market perpetual order with SL and TP.
-    Returns {"ok": True, "order_id": "..."} or {"ok": False, "error": "..."}
+    Set leverage then place a market perpetual order with SL and TP.
+    Returns {"ok": True, "order_id": "...", "qty": qty} or {"ok": False, "error": "..."}
     """
     symbol = get_bybit_symbol(yf_ticker)
     if not symbol:
@@ -134,7 +199,15 @@ def place_order(
     if err:
         return {"ok": False, "error": err}
 
+    # Set leverage first
+    set_leverage(yf_ticker, leverage)
+
     side = "Buy" if direction == "LONG" else "Sell"
+
+    # Format prices to reasonable precision
+    sl_str = f"{sl_price:.4f}" if sl_price < 10 else f"{sl_price:.2f}"
+    tp_str = f"{tp_price:.4f}" if tp_price < 10 else f"{tp_price:.2f}"
+    qty_str = f"{qty:.6f}".rstrip("0").rstrip(".")
 
     try:
         r = session.place_order(
@@ -142,17 +215,17 @@ def place_order(
             symbol=symbol,
             side=side,
             orderType="Market",
-            qty=str(round(qty, 6)),
-            stopLoss=str(round(sl_price, 2)),
-            takeProfit=str(round(tp_price, 2)),
+            qty=qty_str,
+            stopLoss=sl_str,
+            takeProfit=tp_str,
             slTriggerBy="MarkPrice",
             tpTriggerBy="MarkPrice",
             timeInForce="IOC",
             reduceOnly=False,
         )
         if r["retCode"] == 0:
-            return {"ok": True, "order_id": r["result"]["orderId"], "symbol": symbol}
-        return {"ok": False, "error": r.get("retMsg", "Unknown error")}
+            return {"ok": True, "order_id": r["result"]["orderId"], "symbol": symbol, "qty": qty}
+        return {"ok": False, "error": f"[{r['retCode']}] {r.get('retMsg', 'Unknown error')}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -207,3 +280,32 @@ def get_min_qty(yf_ticker: str) -> float:
         return float(info.get("minOrderQty", 0.001))
     except Exception:
         return 0.001
+
+
+def get_trade_history(limit: int = 20) -> list:
+    """Fetch closed PnL history from Bybit (past completed trades)."""
+    session, err = _get_session()
+    if err:
+        return []
+    try:
+        r = session.get_closed_pnl(category="linear", limit=limit)
+        trades = []
+        def _f(v, d=0.0):
+            try: return float(v) if v and v != "" else d
+            except: return d
+        for t in r["result"]["list"]:
+            pnl = _f(t.get("closedPnl"))
+            trades.append({
+                "symbol":     t.get("symbol", ""),
+                "side":       t.get("side", ""),
+                "qty":        _f(t.get("qty")),
+                "entry":      _f(t.get("avgEntryPrice")),
+                "exit":       _f(t.get("avgExitPrice")),
+                "pnl":        pnl,
+                "pnl_pct":    _f(t.get("closedPnl")),
+                "created_at": t.get("createdTime", ""),
+                "won":        pnl > 0,
+            })
+        return trades
+    except Exception:
+        return []
