@@ -82,6 +82,18 @@ def chat_reply(q: str, ctx: str) -> str:
 
 st.set_page_config(page_title="Trading Signals", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
+# Force sidebar open on cloud (Streamlit Cloud sometimes ignores initial_sidebar_state)
+st.markdown("""
+<script>
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        var btn = window.parent.document.querySelector('[data-testid="collapsedControl"]');
+        if (btn) btn.click();
+    }, 500);
+});
+</script>
+""", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 /* Light theme overrides */
