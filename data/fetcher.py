@@ -1,5 +1,6 @@
 import yfinance as yf
 import pandas as pd
+import requests
 
 
 def get_live_price(ticker: str) -> dict:
@@ -59,3 +60,52 @@ def fetch_ohlcv(ticker: str, interval: str = "1d", period: str = "2y") -> pd.Dat
         ).dropna()
 
     return df
+
+
+# ── Binance symbol mapping ────────────────────────────────────────────────────
+_BINANCE_MAP = {
+    "BTC-USD": "BTCUSDT", "ETH-USD": "ETHUSDT", "SOL-USD": "SOLUSDT",
+    "BNB-USD": "BNBUSDT", "XRP-USD": "XRPUSDT", "ADA-USD": "ADAUSDT",
+    "DOGE-USD": "DOGEUSDT", "AVAX-USD": "AVAXUSDT", "MATIC-USD": "MATICUSDT",
+    "DOT-USD": "DOTUSDT",
+}
+
+_INTERVAL_MAP_BINANCE = {
+    "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
+    "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w",
+}
+
+
+def fetch_open_interest(ticker: str, interval: str = "1d", limit: int = 500) -> pd.Series:
+    """
+    Fetch historical Open Interest from Binance Futures API.
+    Returns a Series indexed by datetime. Returns empty Series for non-crypto.
+    OI = total number of outstanding futures contracts (measures market conviction).
+    """
+    sym = _BINANCE_MAP.get(ticker)
+    if not sym:
+        return pd.Series(dtype=float)
+
+    period_map = {
+        "1m": "5m", "5m": "5m", "15m": "15m", "30m": "30m",
+        "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1d",
+    }
+    binance_period = period_map.get(interval, "1d")
+
+    try:
+        url = "https://fapi.binance.com/futures/data/openInterestHist"
+        r = requests.get(url, params={
+            "symbol": sym, "period": binance_period, "limit": limit
+        }, timeout=8)
+        data = r.json()
+        if not isinstance(data, list) or not data:
+            return pd.Series(dtype=float)
+
+        oi = pd.Series(
+            {pd.to_datetime(d["timestamp"], unit="ms"): float(d["sumOpenInterest"])
+             for d in data}
+        )
+        oi.index = pd.to_datetime(oi.index).tz_localize(None)
+        return oi.sort_index()
+    except Exception:
+        return pd.Series(dtype=float)

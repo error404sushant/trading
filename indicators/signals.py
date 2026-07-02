@@ -1,26 +1,56 @@
 """
-Proven 6-system signal engine + two precision filters.
+Signal engine: 6-system scoring + CVD + OI precision filters.
 
-Scoring (same as original — timing is excellent):
+Scoring:
   1. EMA 9/21/50 alignment  (weight 2)
   2. RSI zone 50-70 / 30-50 (weight 1)
   3. MACD crossover          (weight 1)
   4. ADX + DI direction      (weight 1)
   5. Bollinger Band position (weight 1)
   6. Stochastic crossover    (weight 1)
+  7. CVD trend               (weight 1)  ← NEW
   Threshold: score >= +0.4 or <= -0.4
 
-Precision filters applied AFTER scoring:
-  F1. EMA200 direction — LONG only above EMA200, SHORT only below.
-      Stops trading against the macro trend (biggest source of losses).
-  F2. RSI extreme veto — no LONG above RSI 78, no SHORT below RSI 22.
-      Avoids entering when price is maximally stretched.
+Precision filters (applied AFTER scoring):
+  F1. EMA200 direction  — LONG only above EMA200, SHORT only below
+  F2. RSI extreme veto  — no LONG above RSI 78, no SHORT below RSI 22
+  F3. CVD divergence    — block signal when CVD contradicts price direction
+  F4. OI confirmation   — for crypto: block weak signals when OI is falling
+                          (falling OI = contracts closing = move losing steam)
 
-All Wall Street indicators computed for the dashboard display.
+CVD (Cumulative Volume Delta):
+  Approximated from OHLCV using candle body position within the range.
+  buy_pressure  = volume × (close − low)  / (high − low)
+  sell_pressure = volume × (high − close) / (high − low)
+  CVD = cumsum(buy_pressure − sell_pressure)
+  Rising CVD = buyers dominating. Falling CVD = sellers dominating.
+
+Open Interest (OI):
+  Fetched from Binance Futures API for crypto (BTC, ETH, SOL, BNB, etc.)
+  Rising OI + rising price  = new longs entering  → confirms LONG
+  Rising OI + falling price = new shorts entering → confirms SHORT
+  Falling OI = existing positions closing → weak/exhausted move → veto signal
 """
 import pandas as pd
 import numpy as np
 import ta
+
+
+def _compute_cvd(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    CVD approximation from OHLCV.
+    Uses the fraction of the candle range that close occupies above/below midpoint.
+    """
+    hl = (df["high"] - df["low"]).replace(0, np.nan)
+    buy_vol  = df["volume"] * (df["close"] - df["low"])  / hl
+    sell_vol = df["volume"] * (df["high"]  - df["close"]) / hl
+    delta = (buy_vol - sell_vol).fillna(0)
+
+    df["cvd"]       = delta.cumsum()
+    df["cvd_ema"]   = ta.trend.ema_indicator(df["cvd"], window=20)
+    df["cvd_slope"] = df["cvd"].diff(3)   # 3-bar momentum of CVD
+    df["cvd_delta"] = delta                # single-bar delta
+    return df
 
 
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -97,13 +127,35 @@ def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["hammer"]        = ((lower_wick > 2*body) & (upper_wick < 0.5*body) & (body > 0)).astype(float)
     df["shooting_star"] = ((upper_wick > 2*body) & (lower_wick < 0.5*body) & (body > 0)).astype(float)
 
+    # ── CVD ──────────────────────────────────────────────────────────────────
+    df = _compute_cvd(df)
+
     return df
 
 
-def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
+def generate_signals(df: pd.DataFrame, oi_series: pd.Series = None) -> pd.DataFrame:
+    """
+    oi_series: optional Open Interest series indexed by datetime (from Binance API).
+               If provided, used as precision filter F4 for crypto.
+    """
     df = add_all_indicators(df)
 
-    # ── 6-system score ────────────────────────────────────────────────────────
+    # ── Merge OI if provided ──────────────────────────────────────────────────
+    has_oi = False
+    if oi_series is not None and not oi_series.empty:
+        oi_aligned = oi_series.reindex(df.index, method="nearest", tolerance=pd.Timedelta("2d"))
+        if oi_aligned.notna().sum() > 10:
+            df["oi"]       = oi_aligned
+            df["oi_ema"]   = ta.trend.ema_indicator(df["oi"].fillna(method="ffill"), window=10)
+            df["oi_rising"] = (df["oi"] > df["oi_ema"]).astype(float)
+            has_oi = True
+
+    if not has_oi:
+        df["oi"]        = np.nan
+        df["oi_ema"]    = np.nan
+        df["oi_rising"] = np.nan
+
+    # ── 7-system score ────────────────────────────────────────────────────────
     score = pd.Series(0.0, index=df.index)
 
     ema_bull = (df["ema_9"] > df["ema_21"]) & (df["ema_21"] > df["ema_50"])
@@ -128,23 +180,45 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     score += ((df["stoch_k"] > df["stoch_d"]) & (df["stoch_k"] < 80)).astype(float)
     score -= ((df["stoch_k"] < df["stoch_d"]) & (df["stoch_k"] > 20)).astype(float)
 
-    df["score"] = (score / 8.0).clip(-1, 1)
+    # System 7: CVD trend (weight 1)
+    cvd_bull = df["cvd"] > df["cvd_ema"]
+    cvd_bear = df["cvd"] < df["cvd_ema"]
+    score += cvd_bull.astype(float)
+    score -= cvd_bear.astype(float)
 
-    # ── Raw signals ───────────────────────────────────────────────────────────
+    # Max raw score is now 9 (EMA×2 + 5×1 + CVD×1)
+    df["score"] = (score / 9.0).clip(-1, 1)
+
+    # ── Raw signal gate ───────────────────────────────────────────────────────
     df["signal"] = 0
     df.loc[df["score"] >= 0.4,  "signal"] =  1
     df.loc[df["score"] <= -0.4, "signal"] = -1
 
-    # ── Precision filter 1: EMA200 macro direction ────────────────────────────
-    # This is the single most impactful improvement:
-    # fighting the macro trend is the #1 cause of losing trades.
+    # ── Filter 1: EMA200 macro direction ─────────────────────────────────────
     df.loc[(df["signal"] == 1)  & (df["close"] < df["ema_200"]), "signal"] = 0
     df.loc[(df["signal"] == -1) & (df["close"] > df["ema_200"]), "signal"] = 0
 
-    # ── Precision filter 2: RSI extreme veto ─────────────────────────────────
-    # Price already stretched to extremes — odds of continuation worse than reversal.
+    # ── Filter 2: RSI extreme veto ────────────────────────────────────────────
     df.loc[(df["signal"] == 1)  & (df["rsi"] > 78), "signal"] = 0
     df.loc[(df["signal"] == -1) & (df["rsi"] < 22), "signal"] = 0
+
+    # ── Filter 3: CVD divergence veto ────────────────────────────────────────
+    # Price going up but CVD falling = smart money distributing → block LONG
+    # Price going down but CVD rising = smart money accumulating → block SHORT
+    price_up   = df["close"] > df["close"].shift(3)
+    price_down = df["close"] < df["close"].shift(3)
+    cvd_div_bear = price_up   & cvd_bear   # price rising, CVD falling → bearish divergence
+    cvd_div_bull = price_down & cvd_bull   # price falling, CVD rising → bullish divergence
+    df.loc[(df["signal"] == 1)  & cvd_div_bear, "signal"] = 0
+    df.loc[(df["signal"] == -1) & cvd_div_bull, "signal"] = 0
+
+    # ── Filter 4: OI confirmation (crypto only) ───────────────────────────────
+    # Only block when OI is clearly falling (contracts being closed = weak move)
+    if has_oi:
+        oi_falling = df["oi_rising"] == 0
+        # Falling OI = market losing conviction → skip low-confidence signals
+        low_conf = df["score"].abs() < 0.6
+        df.loc[(df["signal"] != 0) & oi_falling & low_conf, "signal"] = 0
 
     # ── Votes + display columns ───────────────────────────────────────────────
     votes = pd.Series(0, index=df.index)
@@ -156,6 +230,7 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     votes -= ((df["rsi"] < 50) & (df["rsi"] > 30)).astype(int)
     votes += ((df["stoch_k"] > df["stoch_d"]) & (df["stoch_k"] < 80)).astype(int)
     votes -= ((df["stoch_k"] < df["stoch_d"]) & (df["stoch_k"] > 20)).astype(int)
+    votes += cvd_bull.astype(int);  votes -= cvd_bear.astype(int)
     df["votes"] = votes
 
     df["cat_a"] = ema_bull.astype(float) - ema_bear.astype(float)
@@ -163,7 +238,7 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
                   (df["macd"] < df["macd_signal"]).astype(float)
     df["cat_c"] = (df["obv"] > df["obv_ema"]).astype(float) - \
                   (df["obv"] < df["obv_ema"]).astype(float)
-    df["cat_d"] = pd.Series(0.0, index=df.index)
+    df["cat_d"] = cvd_bull.astype(float) - cvd_bear.astype(float)
 
     df["confidence"] = (df["score"].abs() * 100).round(1)
     return df

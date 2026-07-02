@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import date, timedelta
 
-from data.fetcher import fetch_ohlcv, get_live_price
+from data.fetcher import fetch_ohlcv, get_live_price, fetch_open_interest
 from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_all_trades, init_db
 from data.screener_store import (init_screener, add_ticker, remove_ticker,
                                   get_watchlist, log_alert, get_recent_alerts)
@@ -286,7 +286,8 @@ with tab1:
         try:
             with st.spinner(f"Loading {ticker} {timeframe}…"):
                 df_raw = fetch_ohlcv(ticker, interval=timeframe)
-                df     = generate_signals(df_raw)
+                oi     = fetch_open_interest(ticker, interval=timeframe)
+                df     = generate_signals(df_raw, oi_series=oi if not oi.empty else None)
             st.session_state.df = df
 
             if auto_opt:
@@ -472,19 +473,37 @@ with tab1:
         # Volume ratio
         vol_r = float(last.get("vol_ratio", 1.0))
 
+        # CVD display
+        cvd_val  = float(last.get("cvd", 0))
+        cvd_ema  = float(last.get("cvd_ema", 0))
+        cvd_bull_now = cvd_val > cvd_ema
+        cvd_slope = float(last.get("cvd_slope", 0))
+        cvd_label = f"{'▲' if cvd_slope > 0 else '▼'} {'Bull' if cvd_bull_now else 'Bear'}"
+
+        # OI display
+        oi_val   = last.get("oi", None)
+        oi_ema_v = last.get("oi_ema", None)
+        has_oi_data = oi_val is not None and not pd.isna(oi_val)
+        if has_oi_data:
+            oi_rising_now = float(oi_val) > float(oi_ema_v) if not pd.isna(oi_ema_v) else False
+            oi_label = f"{'↑' if oi_rising_now else '↓'} {float(oi_val)/1e3:.0f}K"
+        else:
+            oi_rising_now = None
+            oi_label = "N/A"
+
         chips = [
-            ("RSI",        f"{last['rsi']:.0f}",                       50 < last['rsi'] < 70),
-            ("ADX+DI",     f"+{last['adx_pos']:.0f}/−{last['adx_neg']:.0f}", last['adx'] > 25 and last['adx_pos'] > last['adx_neg']),
-            ("MACD",       "Bull" if last['macd'] > last['macd_signal'] else "Bear", last['macd'] > last['macd_signal']),
-            ("EMA Stack",  "Aligned" if last['ema_9'] > last['ema_21'] > last['ema_50'] else "Broken", last['ema_9'] > last['ema_21'] > last['ema_50']),
-            ("EMA 200",    "Above" if last['close'] > last['ema_200'] else "Below", last['close'] > last['ema_200']),
-            ("Stoch",      f"{last['stoch_k']:.0f}",                    20 < last['stoch_k'] < 80),
-            ("CCI",        f"{last.get('cci', 0):.0f}",                 -100 < last.get('cci', 0) < 100),
-            ("Ichimoku",   ichi_label,                                   above_cloud),
-            ("Vol Ratio",  f"{vol_r:.1f}×",                             vol_r > 1.2),
+            ("EMA Stack",  "Aligned ✓" if last['ema_9'] > last['ema_21'] > last['ema_50'] else "Broken", last['ema_9'] > last['ema_21'] > last['ema_50']),
+            ("EMA 200",    "Above" if last['close'] > last['ema_200'] else "Below",           last['close'] > last['ema_200']),
+            ("RSI",        f"{last['rsi']:.0f}",                                              50 < last['rsi'] < 70),
+            ("MACD",       "Bull" if last['macd'] > last['macd_signal'] else "Bear",          last['macd'] > last['macd_signal']),
+            ("ADX+DI",     f"+{last['adx_pos']:.0f}/−{last['adx_neg']:.0f}",                 last['adx'] > 25 and last['adx_pos'] > last['adx_neg']),
+            ("Stoch",      f"{last['stoch_k']:.0f}",                                          20 < last['stoch_k'] < 80),
+            ("CVD",        cvd_label,                                                          cvd_bull_now),
+            ("OI",         oi_label,                                                           oi_rising_now if oi_rising_now is not None else True),
             ("OBV",        "Rising" if last.get("obv", 0) > last.get("obv_ema", 0) else "Falling", last.get("obv", 0) > last.get("obv_ema", 0)),
-            ("RSI Div",    "Bull Div" if last.get("rsi_bull_div", 0) else ("Bear Div" if last.get("rsi_bear_div", 0) else "None"), last.get("rsi_bull_div", 0) == 1),
-            ("Confluence", f"{abs(votes)}/12",                           abs(votes) >= 5),
+            ("Vol Ratio",  f"{vol_r:.1f}×",                                                   vol_r > 1.2),
+            ("Ichimoku",   ichi_label,                                                         above_cloud),
+            ("CCI",        f"{last.get('cci', 0):.0f}",                                       -100 < last.get('cci', 0) < 100),
         ]
         rows = [chips[:6], chips[6:]]
         for row in rows:
@@ -911,7 +930,9 @@ with tab4:
                 sig_val   = 0
 
                 try:
-                    df_s = generate_signals(fetch_ohlcv(sym, interval=tf))
+                    oi_s = fetch_open_interest(sym, interval=tf)
+                    df_s = generate_signals(fetch_ohlcv(sym, interval=tf),
+                                            oi_series=oi_s if not oi_s.empty else None)
                     last_s   = df_s.iloc[-1]
                     sig_val  = int(last_s["signal"])
                     score_s  = float(last_s["score"])
