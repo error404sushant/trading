@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from datetime import date, timedelta
 
 from data.fetcher import fetch_ohlcv, get_live_price
 from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_all_trades, init_db
@@ -539,38 +540,160 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab2:
     result = st.session_state.result
-    if result:
-        wr = result.win_rate
-        c1,c2,c3,c4,c5,c6 = st.columns(6)
-        for col,val,lbl,ok in [
-            (c1, f"{wr:.1f}%",                "Win Rate",     wr>=55),
-            (c2, str(result.n_trades),         "Total Trades", True),
-            (c3, f"{result.total_return:.0f}%","Total Return", result.total_return>0),
-            (c4, f"{result.max_drawdown:.1f}%","Max Drawdown", False),
-            (c5, f"{result.sharpe:.2f}",       "Sharpe Ratio", result.sharpe>1),
-            (c6, f"{result.profit_factor:.2f}","Profit Factor",result.profit_factor>1.5),
-        ]:
-            color = "#16a34a" if ok else "#dc2626"
-            with col:
-                st.markdown(f"""<div class="lvl">
-                  <div class="lvl-lbl">{lbl}</div>
-                  <div class="lvl-val" style="color:{color};">{val}</div>
-                </div>""", unsafe_allow_html=True)
+    if result and st.session_state.df is not None:
+        df_full = st.session_state.df
+
+        # ── Date range picker ─────────────────────────────────────────────────
+        st.markdown("#### 📅 Date Range Filter")
+        df_min = df_full.index.min().date()
+        df_max = df_full.index.max().date()
+        default_start = max(df_min, df_max - timedelta(days=365))
+
+        col_d1, col_d2, col_d3 = st.columns([2, 2, 1])
+        with col_d1:
+            range_start = st.date_input("From", value=default_start,
+                                        min_value=df_min, max_value=df_max,
+                                        key="bt_start")
+        with col_d2:
+            range_end = st.date_input("To", value=df_max,
+                                      min_value=df_min, max_value=df_max,
+                                      key="bt_end")
+        with col_d3:
+            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+            use_full = st.checkbox("Full history", value=False, key="bt_full")
+
+        # Slice the dataframe
+        if use_full or range_start >= range_end:
+            df_slice   = df_full
+            range_label = "Full History"
+        else:
+            df_slice   = df_full[str(range_start):str(range_end)]
+            range_label = f"{range_start} → {range_end}"
+
+        # Run backtest on the slice
+        if len(df_slice) > 10:
+            used_sl = st.session_state.opt_sl
+            used_tp = st.session_state.opt_tp
+            r_slice = run_backtest(df_slice, used_sl, used_tp)
+        else:
+            r_slice = None
+
+        st.markdown(f"<div style='font-size:0.75rem;color:#6b7280;margin-bottom:12px;'>Showing: <b>{range_label}</b> &nbsp;·&nbsp; {len(df_slice)} candles</div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── Metrics: Full Period vs Selected Range ────────────────────────────
+        if not use_full and r_slice and range_start < range_end:
+            col_full, col_range = st.columns(2)
+
+            def _metric_card(r, label, color):
+                wr = r.win_rate
+                wins  = sum(1 for t in r.closed_trades if t.won)
+                losses = r.n_trades - wins
+                avg_w = r.avg_win
+                avg_l = r.avg_loss
+                return f"""
+                <div style="background:#f8f9fc;border:1px solid #e0e4ef;border-radius:12px;padding:16px;border-top:3px solid {color};">
+                  <div style="font-size:0.72rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">{label}</div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+                    <div style="text-align:center;">
+                      <div style="font-size:1.6rem;font-weight:900;color:{'#16a34a' if wr>=50 else '#dc2626'};">{wr:.1f}%</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">WIN RATE</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.6rem;font-weight:900;color:#111827;">{r.n_trades}</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">TRADES</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.6rem;font-weight:900;color:{'#16a34a' if r.total_return>0 else '#dc2626'};">{r.total_return:.0f}%</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">RETURN</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:#16a34a;">{avg_w:+.2f}%</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">AVG WIN</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:#dc2626;">{avg_l:+.2f}%</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">AVG LOSS</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:{'#16a34a' if r.profit_factor>=1.5 else '#f59e0b' if r.profit_factor>=1 else '#dc2626'};">{r.profit_factor:.2f}</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">PROFIT FACTOR</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:#16a34a;">{wins}</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">WINS</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:#dc2626;">{losses}</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">LOSSES</div>
+                    </div>
+                    <div style="text-align:center;">
+                      <div style="font-size:1.1rem;font-weight:700;color:#dc2626;">{r.max_drawdown:.1f}%</div>
+                      <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">MAX DD</div>
+                    </div>
+                  </div>
+                </div>"""
+
+            with col_full:
+                st.markdown(_metric_card(result, "Full History", "#6b7280"), unsafe_allow_html=True)
+            with col_range:
+                st.markdown(_metric_card(r_slice, f"Selected: {range_label}", "#2962FF"), unsafe_allow_html=True)
+
+        else:
+            # Full history — single row
+            wr = result.win_rate
+            wins  = sum(1 for t in result.closed_trades if t.won)
+            losses = result.n_trades - wins
+            c1,c2,c3,c4,c5,c6,c7,c8 = st.columns(8)
+            for col,val,lbl,ok in [
+                (c1, f"{wr:.1f}%",                    "Win Rate",     wr>=50),
+                (c2, str(result.n_trades),             "Total Trades", True),
+                (c3, str(wins),                        "Wins",         True),
+                (c4, str(losses),                      "Losses",       False),
+                (c5, f"{result.total_return:.0f}%",    "Total Return", result.total_return>0),
+                (c6, f"{result.avg_win:+.2f}%",        "Avg Win",      True),
+                (c7, f"{result.avg_loss:+.2f}%",       "Avg Loss",     False),
+                (c8, f"{result.profit_factor:.2f}",    "Profit Factor",result.profit_factor>1.5),
+            ]:
+                color = "#16a34a" if ok else "#dc2626"
+                with col:
+                    st.markdown(f"""<div class="lvl">
+                      <div class="lvl-lbl">{lbl}</div>
+                      <div class="lvl-val" style="color:{color};font-size:1.1rem;">{val}</div>
+                    </div>""", unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        fig2 = go.Figure(go.Scatter(
-            x=result.equity.index, y=result.equity.values,
-            fill="tozeroy", mode="lines",
-            line=dict(color="#2962FF", width=2.5, shape="spline", smoothing=0.5),
-            fillcolor="rgba(41,98,255,0.08)",
-        ))
+        # ── Equity curve ──────────────────────────────────────────────────────
+        disp_result = r_slice if (r_slice and not use_full and range_start < range_end) else result
+        fig2 = go.Figure()
+        if not use_full and r_slice and range_start < range_end:
+            # Show full period faded, selected range highlighted
+            fig2.add_trace(go.Scatter(
+                x=result.equity.index, y=result.equity.values,
+                mode="lines", name="Full History",
+                line=dict(color="rgba(107,114,128,0.25)", width=1.5),
+            ))
+            fig2.add_trace(go.Scatter(
+                x=r_slice.equity.index, y=r_slice.equity.values,
+                fill="tozeroy", mode="lines", name=f"Selected: {range_label}",
+                line=dict(color="#2962FF", width=2.5, shape="spline", smoothing=0.5),
+                fillcolor="rgba(41,98,255,0.08)",
+            ))
+        else:
+            fig2.add_trace(go.Scatter(
+                x=result.equity.index, y=result.equity.values,
+                fill="tozeroy", mode="lines", name="Equity",
+                line=dict(color="#2962FF", width=2.5, shape="spline", smoothing=0.5),
+                fillcolor="rgba(41,98,255,0.08)",
+            ))
         fig2.update_layout(
             height=280, template="plotly_white",
             paper_bgcolor="#ffffff", plot_bgcolor="#fafbff",
-            title=f"Equity Curve — {ticker} {timeframe} (start $10,000)",
+            title=f"Equity Curve — {ticker} {timeframe} · {range_label} (start $10,000)",
             margin=dict(l=0,r=0,t=40,b=0),
             font=dict(color="#111827"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -616,10 +739,11 @@ with tab2:
         st.markdown("---")
 
         # ── Section 2: Historical backtest trades ─────────────────────────────
-        st.markdown("### 📊 Historical Backtest Trades")
-        st.caption(f"All {result.n_trades} trades from the backtest — newest first")
+        trades_to_show = disp_result.closed_trades
+        st.markdown(f"### 📊 Historical Backtest Trades ({range_label})")
+        st.caption(f"{len(trades_to_show)} trades — newest first")
         hist_rows = []
-        for t in sorted(result.closed_trades, key=lambda x: x.entry_date, reverse=True):
+        for t in sorted(trades_to_show, key=lambda x: x.entry_date, reverse=True):
             hist_rows.append({
                 "Entry Date": t.entry_date.strftime("%Y-%m-%d") if t.entry_date else "",
                 "Exit Date":  t.exit_date.strftime("%Y-%m-%d")  if t.exit_date  else "—",
@@ -629,7 +753,10 @@ with tab2:
                 "PnL %":      f"{t.pnl_pct:+.2f}%" if t.pnl_pct is not None else "—",
                 "Result":     "✅ WIN" if t.won else "❌ LOSS",
             })
-        st.dataframe(pd.DataFrame(hist_rows), use_container_width=True, height=400)
+        if hist_rows:
+            st.dataframe(pd.DataFrame(hist_rows), use_container_width=True, height=400)
+        else:
+            st.caption("No closed trades in this date range.")
     else:
         st.info("Run an analysis first to see backtest results.")
 
