@@ -53,11 +53,14 @@ def get_open_trade(ticker: str, timeframe: str):
 def open_trade(ticker: str, timeframe: str, direction: str,
                entry_price: float, sl_price: float, tp_price: float,
                sl_pct: float, tp_pct: float, signal_score: float = 0.0):
-    """Record a new trade. Only allowed if no OPEN trade exists for this ticker+timeframe."""
+    """
+    Record a new trade. Only allowed if no OPEN trade exists for this ticker+timeframe.
+    Returns (trade_id, is_new): is_new=True if just created, False if already existed.
+    """
     init_db()
     existing = get_open_trade(ticker, timeframe)
     if existing:
-        return existing["id"]   # already open — don't overwrite
+        return existing["id"], False   # already open — don't overwrite
 
     entry_date = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     with _conn() as con:
@@ -69,7 +72,7 @@ def open_trade(ticker: str, timeframe: str, direction: str,
             (ticker, timeframe, direction, entry_date, entry_price,
              sl_price, tp_price, sl_pct, tp_pct, signal_score)
         )
-        return cur.lastrowid
+        return cur.lastrowid, True
 
 
 def close_trade(trade_id: int, exit_price: float, status: str):

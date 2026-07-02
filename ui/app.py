@@ -10,6 +10,8 @@ from data.fetcher import fetch_ohlcv, get_live_price, fetch_open_interest
 from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_all_trades, init_db
 from data.screener_store import (init_screener, add_ticker, remove_ticker,
                                   get_watchlist, log_alert, get_recent_alerts)
+from data.bybit_client import (is_configured, get_balance, get_positions,
+                                place_order, close_position, get_bybit_symbol, get_min_qty)
 from indicators.signals import generate_signals
 from backtest.engine import run_backtest
 from backtest.optimizer import optimize
@@ -145,7 +147,8 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
-            ("screener_last", {}),("screener_new_alerts",[])]:
+            ("screener_last", {}),("screener_new_alerts",[]),
+            ("bybit_auto_trade", False),("bybit_qty", 0.001),("bybit_last_order", {})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -246,6 +249,92 @@ with st.sidebar:
                     st.rerun()
 
     st.divider()
+
+    # ══ BYBIT DEMO TRADING ═══════════════════════════════════════════════════
+    if is_configured():
+        st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
+             text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">
+          🟡 Bybit Demo Trading
+        </div>""", unsafe_allow_html=True)
+
+        @st.fragment(run_every=15)
+        def bybit_panel():
+            bal = get_balance()
+            if bal["ok"]:
+                eq  = bal["equity"]
+                pnl = bal["unrealised_pnl"]
+                pc  = "#16a34a" if pnl >= 0 else "#dc2626"
+                st.markdown(f"""
+                <div style="background:#fffbf0;border:1px solid #f59e0b;border-radius:8px;
+                     padding:10px 12px;margin-bottom:8px;">
+                  <div style="font-size:0.68rem;color:#6b7280;">USDT Balance</div>
+                  <div style="font-size:1.2rem;font-weight:800;color:#111827;">${eq:,.2f}</div>
+                  <div style="font-size:0.72rem;color:{pc};font-weight:600;">
+                    Unrealised PnL: {'+' if pnl>=0 else ''}{pnl:.2f}
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            positions = get_positions()
+            if positions:
+                st.markdown("<div style='font-size:0.68rem;font-weight:700;color:#6b7280;margin-bottom:4px;'>OPEN POSITIONS</div>", unsafe_allow_html=True)
+                for p in positions:
+                    pnl = p["unrealised_pnl"]
+                    pc  = "#16a34a" if pnl >= 0 else "#dc2626"
+                    bg  = "#f0fff4" if pnl >= 0 else "#fff5f5"
+                    bc  = "#22c55e" if pnl >= 0 else "#ef4444"
+                    tag = "▲ LONG" if p["side"] == "Buy" else "▼ SHORT"
+                    tag_c = "#16a34a" if p["side"] == "Buy" else "#dc2626"
+                    pnl_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"] * 100
+                    if p["side"] == "Sell":
+                        pnl_pct = -pnl_pct
+                    st.markdown(f"""
+                    <div style="background:{bg};border-left:4px solid {bc};
+                         border-radius:8px;padding:8px 10px;margin-bottom:6px;">
+                      <div style="display:flex;justify-content:space-between;">
+                        <span style="font-weight:800;font-size:0.88rem;">{p['symbol']}</span>
+                        <span style="font-weight:900;color:{pc};">{pnl_pct:+.2f}%</span>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;margin-top:2px;">
+                        <span style="font-size:0.7rem;font-weight:700;color:{tag_c};">{tag} · {p['size']}</span>
+                        <span style="font-size:0.7rem;color:{pc};">${pnl:+.2f}</span>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;margin-top:3px;font-size:0.68rem;color:#374151;">
+                        <span>In <b>${p['entry_price']:,.2f}</b></span>
+                        <span>Now <b>${p['mark_price']:,.2f}</b></span>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:0.65rem;">
+                        <span style="color:#dc2626;">SL ${p['sl']:,.2f}</span>
+                        <span style="color:#16a34a;">TP ${p['tp']:,.2f}</span>
+                        <span style="color:#6b7280;">{p['leverage']}×</span>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    # Close button (one per position)
+                    yf_sym = next((k for k,v in __import__('data.bybit_client', fromlist=['SYMBOL_MAP']).SYMBOL_MAP.items() if v == p['symbol']), None)
+                    if yf_sym and st.button(f"Close {p['symbol']}", key=f"close_{p['symbol']}", use_container_width=True):
+                        res = close_position(yf_sym)
+                        if res["ok"]:
+                            st.success("Position closed!")
+                        else:
+                            st.error(res["error"])
+                        st.rerun()
+
+        bybit_panel()
+
+        st.session_state.bybit_auto_trade = st.toggle(
+            "⚡ Auto-Trade on Signal", value=st.session_state.bybit_auto_trade,
+            help="Automatically place a Bybit perpetual order when a signal fires"
+        )
+        if st.session_state.bybit_auto_trade:
+            st.session_state.bybit_qty = st.number_input(
+                "Qty (base coin)", min_value=0.001, max_value=10.0,
+                value=float(st.session_state.bybit_qty), step=0.001, format="%.3f",
+                help="How many coins to buy/sell per signal. Start small!"
+            )
+            st.warning("⚡ Auto-trade ON — signals will place real demo orders")
+
+        st.divider()
+
     timeframe = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
                              index=6, key="tf_select")
     st.session_state.tf = timeframe
@@ -331,11 +420,33 @@ with tab1:
         if sig == 1 and price > 0:
             sl_p = price * (1 - used_sl / 100)
             tp_p = price * (1 + used_tp / 100)
-            open_trade(ticker, timeframe, "LONG", price, sl_p, tp_p, used_sl, used_tp, score)
+            _, is_new = open_trade(ticker, timeframe, "LONG", price, sl_p, tp_p, used_sl, used_tp, score)
+            # ── Bybit auto-trade ──────────────────────────────────────────────
+            if is_new and st.session_state.get("bybit_auto_trade") and get_bybit_symbol(ticker):
+                order_key = f"{ticker}|LONG|{price:.2f}"
+                if st.session_state.bybit_last_order.get(ticker) != order_key:
+                    qty = st.session_state.bybit_qty
+                    res = place_order(ticker, "LONG", qty, sl_p, tp_p)
+                    st.session_state.bybit_last_order[ticker] = order_key
+                    if res["ok"]:
+                        st.toast(f"✅ Bybit LONG placed — {ticker} qty {qty}", icon="🟢")
+                    else:
+                        st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
         elif sig == -1 and price > 0:
             sl_p = price * (1 + used_sl / 100)
             tp_p = price * (1 - used_tp / 100)
-            open_trade(ticker, timeframe, "SHORT", price, sl_p, tp_p, used_sl, used_tp, score)
+            _, is_new = open_trade(ticker, timeframe, "SHORT", price, sl_p, tp_p, used_sl, used_tp, score)
+            # ── Bybit auto-trade ──────────────────────────────────────────────
+            if is_new and st.session_state.get("bybit_auto_trade") and get_bybit_symbol(ticker):
+                order_key = f"{ticker}|SHORT|{price:.2f}"
+                if st.session_state.bybit_last_order.get(ticker) != order_key:
+                    qty = st.session_state.bybit_qty
+                    res = place_order(ticker, "SHORT", qty, sl_p, tp_p)
+                    st.session_state.bybit_last_order[ticker] = order_key
+                    if res["ok"]:
+                        st.toast(f"✅ Bybit SHORT placed — {ticker} qty {qty}", icon="🔴")
+                    else:
+                        st.toast(f"❌ Bybit order failed: {res['error']}", icon="🔴")
 
         # Auto-close if SL/TP hit
         db_trade = get_open_trade(ticker, timeframe)
