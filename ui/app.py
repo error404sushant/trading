@@ -99,6 +99,11 @@ st.markdown("""
 /* Light theme overrides */
 [data-testid="stAppViewContainer"] { background:#ffffff; }
 [data-testid="stSidebar"] { background:#f8f9fc; border-right:1px solid #e0e4ef; }
+
+/* Silent auto-refresh — no fade/grey during fragment reruns */
+[data-stale="true"] { opacity: 1 !important; transition: none !important; }
+[data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stSpinner"] { display: none !important; }
 [data-testid="stHeader"] { background:#ffffff; border-bottom:1px solid #e0e4ef; }
 section[data-testid="stSidebar"] > div { padding-top:1rem; }
 
