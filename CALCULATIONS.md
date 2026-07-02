@@ -1,6 +1,6 @@
-# Trading Platform — How Everything Is Calculated
+# Trading Platform — Complete Technical Reference
 
-This document explains every calculation in the platform in plain language, from raw price data to the final LONG/SHORT signal and backtest metrics.
+This document explains every calculation in the platform: from raw price data to the final LONG/SHORT signal, backtest metrics, optimizer, trade persistence, and the screener notification system.
 
 ---
 
@@ -19,260 +19,313 @@ Each candle (bar) has five values:
 | `close` | Price at the end of the candle |
 | `volume` | Number of shares/units traded |
 
-**Live price** is fetched separately using `yf.Ticker.fast_info.last_price` — this is the real-time last traded price, not the stale candle close.
+**Live price** uses `yf.Ticker.fast_info.last_price` — the real-time last traded price, not a stale candle close. Falls back to the latest 1-minute bar if fast_info fails.
+
+**Timeframe mapping:**
+
+| UI Timeframe | Yahoo Finance interval | Max history |
+|---|---|---|
+| 1m | 1m | 7 days |
+| 5m / 15m / 30m | 5m / 15m / 30m | 60 days |
+| 1h / 4h | 1h (4h resampled) | 730 days |
+| 1d | 1d | Max available |
+| 1w | 1wk | Max available |
+| 1M | 1mo | Max available |
 
 ---
 
-## 2. Technical Indicators
+## 2. Wall Street Signal Engine — 12 Systems
 
-**File:** `indicators/signals.py` → `add_all_indicators()`
+**File:** `indicators/signals.py`  
+**Function:** `generate_signals(df)`
 
-### 2.1 Exponential Moving Averages (EMA)
+The platform uses **12 independent analytical systems**, each weighted by importance. Every system casts a directional vote (+bull / −bear). The composite score is normalised to [−1, +1].
 
-An EMA gives more weight to recent candles than old ones. It "follows" the price but smooths out noise.
+**Signal fires only when:** score ≥ ±0.45 **AND** at least 5 of 12 systems agree.
+
+---
+
+### System 1 — EMA Trend Stack (Weight: 3)
+
+The single most important filter. All three short-to-medium EMAs must be aligned before any signal is considered.
 
 ```
 EMA(today) = close(today) × k + EMA(yesterday) × (1 − k)
-where k = 2 / (window + 1)
+k = 2 / (window + 1)
 ```
 
-Four EMAs are calculated:
-
-| EMA | Window | Purpose |
+| EMA | Window | Role |
 |---|---|---|
-| EMA 9 | 9 bars | Short-term trend (very reactive) |
+| EMA 9 | 9 bars | Short-term momentum |
 | EMA 21 | 21 bars | Medium-term trend |
-| EMA 50 | 50 bars | Long-term trend (main trend filter) |
-| EMA 200 | 200 bars | Macro trend (bull/bear market) |
+| EMA 50 | 50 bars | Primary trend direction |
 
-**Reading:**  
-- EMA9 > EMA21 > EMA50 = Strong uptrend (price accelerating up)  
-- EMA9 < EMA21 < EMA50 = Strong downtrend  
-- Price above EMA200 = Bull market; below = Bear market
+```
+BULL: EMA9 > EMA21 > EMA50  →  +3
+BEAR: EMA9 < EMA21 < EMA50  →  −3
+```
 
 ---
 
-### 2.2 MACD (Moving Average Convergence Divergence)
+### System 2 — EMA 200 Macro Regime Filter (Weight: 2)
 
-Measures momentum — how fast the trend is accelerating or decelerating.
+Institutional funds track this line. Above it = bull market. Below = bear market. This filter prevents taking longs in a bear market or shorts in a bull market.
 
 ```
-MACD Line    = EMA(12) − EMA(26)
-Signal Line  = EMA(9) of MACD Line
-Histogram    = MACD Line − Signal Line
+BULL: close > EMA200  →  +2
+BEAR: close < EMA200  →  −2
 ```
-
-**Reading:**  
-- MACD Line crosses **above** Signal Line = Bullish momentum starting  
-- MACD Line crosses **below** Signal Line = Bearish momentum starting  
-- Histogram growing positive = momentum accelerating upward  
-- Histogram shrinking = momentum fading (early warning of reversal)
 
 ---
 
-### 2.3 ADX (Average Directional Index)
+### System 3 — MACD Momentum Crossover (Weight: 2)
 
-Measures **trend strength** — not direction, just how strong the move is.
+Measures how fast the trend is accelerating or decelerating.
+
+```
+MACD Line   = EMA(12) − EMA(26)
+Signal Line = EMA(9) of MACD Line
+Histogram   = MACD Line − Signal Line
+```
+
+```
+BULL: MACD Line > Signal Line  →  +2
+BEAR: MACD Line < Signal Line  →  −2
+```
+
+---
+
+### System 4 — MACD Histogram Direction (Weight: 1)
+
+The histogram shows momentum acceleration. A rising histogram means the trend is gaining strength even before the MACD crossover completes.
+
+```
+BULL: histogram(today) > histogram(yesterday)  →  +1
+BEAR: histogram(today) < histogram(yesterday)  →  −1
+```
+
+---
+
+### System 5 — ADX + Directional Index (Weight: 2)
+
+ADX measures trend strength; +DI and −DI give direction. This combination tells you **both** that the market is trending AND which way.
 
 ```
 +DM = high − previous_high  (if positive, else 0)
 −DM = previous_low − low    (if positive, else 0)
 TR  = max(high−low, |high−prev_close|, |low−prev_close|)
 
-+DI = 100 × EMA(+DM, 14) / EMA(TR, 14)
-−DI = 100 × EMA(−DM, 14) / EMA(TR, 14)
-DX  = 100 × |+DI − −DI| / (+DI + −DI)
-ADX = EMA(DX, 14)
++DI = 100 × EMA(+DM, 14) / ATR(14)
+−DI = 100 × EMA(−DM, 14) / ATR(14)
+ADX = EMA(|+DI − −DI| / (+DI + −DI), 14) × 100
 ```
 
-**Reading:**  
-- ADX > 25 = Trending market — signals are reliable  
-- ADX > 40 = Very strong trend  
-- ADX < 20 = Choppy/ranging market — avoid trading, signals often fail  
-- ADX tells you nothing about direction; combine with EMA for direction
+```
+BULL: ADX > 25 AND +DI > −DI  →  +2
+BEAR: ADX > 25 AND −DI > +DI  →  −2
+No trend (ADX < 25): 0 vote
+```
+
+ADX < 20 = choppy market; signals from other systems are ignored.
 
 ---
 
-### 2.4 RSI (Relative Strength Index)
+### System 6 — RSI Zone (Weight: 1.5)
 
-Measures whether price is overbought (too high, due for pullback) or oversold (too low, due for bounce). Window: 14 bars.
+Measures whether momentum is in a bullish or bearish zone (not just overbought/oversold extremes).
 
 ```
-Average Gain = mean of gains over last 14 bars
-Average Loss = mean of losses over last 14 bars
-RS           = Average Gain / Average Loss
-RSI          = 100 − (100 / (1 + RS))
+Average Gain = mean of 14-bar gains
+Average Loss = mean of 14-bar losses
+RSI = 100 − (100 / (1 + Average Gain / Average Loss))
 ```
 
-**Reading:**  
-- RSI < 30 = Oversold — potential bounce (bullish opportunity)  
-- RSI > 70 = Overbought — potential drop (bearish opportunity)  
-- RSI 40–60 = Neutral zone — no strong signal  
-- RSI > 50 in an uptrend = momentum confirmation  
+```
+BULL: RSI 55–75  →  +1.5   (bullish momentum, not yet extreme)
+BEAR: RSI 25–45  →  −1.5   (bearish momentum, not yet extreme)
+Neutral (40–60): 0 vote
+```
 
 ---
 
-### 2.5 Stochastic Oscillator
+### System 7 — RSI Divergence (Weight: 2)
 
-Compares current close to the range over the last 14 bars — shows where price sits within its recent range.
+One of the highest-value signals used by professional analysts. Divergence between price and RSI often precedes major reversals.
+
+```
+lookback = 5 bars
+
+Bullish divergence:
+  price makes lower low (close < close[5])
+  RSI makes higher low  (rsi  > rsi[5])
+  → Sellers losing strength while price drops  →  +2
+
+Bearish divergence:
+  price makes higher high (close > close[5])
+  RSI makes lower high    (rsi  < rsi[5])
+  → Buyers losing strength while price rises  →  −2
+```
+
+---
+
+### System 8 — Stochastic Oscillator (Weight: 1)
+
+Shows where price sits within its recent range. More sensitive than RSI for short-term momentum shifts.
 
 ```
 %K = (close − lowest_low_14) / (highest_high_14 − lowest_low_14) × 100
-%D = 3-bar SMA of %K  (signal line)
+%D = 3-bar SMA of %K
 ```
 
-**Reading:**  
-- %K > %D and %K < 80 = Bullish momentum (not yet overbought)  
-- %K < %D and %K > 20 = Bearish momentum (not yet oversold)  
-- %K crossing above %D from below 20 = Strong buy signal  
-- %K crossing below %D from above 80 = Strong sell signal
+```
+BULL: %K > %D AND %K < 80  →  +1
+BEAR: %K < %D AND %K > 20  →  −1
+```
 
 ---
 
-### 2.6 Bollinger Bands (BB)
+### System 9 — CCI (Commodity Channel Index) (Weight: 1)
 
-Measures volatility and whether price is stretched. Uses a 20-bar moving average with 2 standard deviations.
+Measures how far price has deviated from its statistical average. Used by institutional commodity and futures traders.
 
 ```
-Middle Band = SMA(close, 20)
-Upper Band  = SMA + 2 × StdDev(close, 20)
-Lower Band  = SMA − 2 × StdDev(close, 20)
-
-BB %        = (close − Lower Band) / (Upper Band − Lower Band)
+Typical Price = (high + low + close) / 3
+Mean TP       = SMA(Typical Price, 20)
+Mean Dev      = mean(|Typical Price − Mean TP|, 20)
+CCI           = (Typical Price − Mean TP) / (0.015 × Mean Dev)
 ```
 
-**Reading:**  
-- BB% > 0.8 = Price near upper band = overbought  
-- BB% < 0.2 = Price near lower band = oversold  
-- BB% 0.4–0.6 = Middle zone = neutral  
-- Bands squeezing together = low volatility, big move coming soon  
-- Price breaking above upper band with volume = strong breakout
+```
+BULL: CCI > +100  →  +1   (strong bullish momentum)
+BEAR: CCI < −100  →  −1   (strong bearish momentum)
+```
 
 ---
 
-### 2.7 ATR (Average True Range)
+### System 10 — Ichimoku Cloud (Weight: 2)
 
-Measures volatility — how much price moves on an average bar. Used to set realistic stop losses.
+A complete trading system from Japan used by institutional traders worldwide. Combines five lines into a "cloud" that acts as dynamic support/resistance.
 
 ```
-True Range = max(high−low, |high−prev_close|, |low−prev_close|)
-ATR        = EMA(True Range, 14)
+Tenkan-sen (Conversion): (highest_high_9 + lowest_low_9) / 2
+Kijun-sen  (Base):       (highest_high_26 + lowest_low_26) / 2
+Senkou A:                (Tenkan + Kijun) / 2  (plotted 26 bars ahead)
+Senkou B:                (highest_high_52 + lowest_low_52) / 2  (26 bars ahead)
+
+Cloud Top    = max(Senkou A, Senkou B)
+Cloud Bottom = min(Senkou A, Senkou B)
 ```
 
-**Why it matters:** A stock with ATR of $5 should have a stop loss at least $5 away. If your stop is too tight, normal price noise will knock you out before the trade plays out.
+```
+BULL: close > Cloud Top  AND  Tenkan > Kijun  →  +2
+BEAR: close < Cloud Bottom  AND  Tenkan < Kijun  →  −2
+In cloud: 0 vote (uncertain)
+```
 
 ---
 
-### 2.8 OBV (On-Balance Volume)
+### System 11 — Volume Confirmation (Weight: 1.5)
 
-Tracks whether volume is flowing into or out of an asset. Confirms price moves with volume.
+Institutional moves are always backed by volume. A price move on weak volume is suspect; on strong volume it's trustworthy.
 
 ```
-If close > prev_close: OBV = prev_OBV + volume
-If close < prev_close: OBV = prev_OBV − volume
-If close = prev_close: OBV = prev_OBV
+Volume SMA  = SMA(volume, 20)
+Volume Ratio = volume / Volume SMA        (>1.0 = above average)
+
+OBV (On-Balance Volume):
+  If close > prev_close: OBV += volume
+  If close < prev_close: OBV -= volume
+OBV EMA = EMA(OBV, 20)
 ```
 
-**Reading:**  
-- OBV rising while price rises = healthy uptrend (buyers backing the move)  
-- OBV falling while price rises = dangerous (price going up on weak volume — likely to reverse)  
-- OBV divergence = one of the most reliable early reversal signals
+```
+BULL: close > prev_close  AND  vol_ratio > 1.3  AND  OBV > OBV_EMA  →  +1.5
+BEAR: close < prev_close  AND  vol_ratio > 1.3  AND  OBV < OBV_EMA  →  −1.5
+```
+
+High volume on the wrong side of the trade is a red flag.
 
 ---
 
-### 2.9 VWAP (Volume-Weighted Average Price)
+### System 12 — Candlestick Patterns (Weight: 1–1.5)
 
-The average price weighted by how much was traded at each level. Institutional traders (banks, funds) use this as their benchmark.
+Price action patterns that reflect the psychology of buyers and sellers at key levels.
 
+**Bullish Engulfing** (+1.5): A large green candle that completely wraps around the previous red candle. Shows buyers overwhelmed sellers.
 ```
-VWAP = Σ(volume × typical_price) / Σ(volume)
-where typical_price = (high + low + close) / 3
+current close > current open  (green)
+previous close < previous open  (red)
+current close > previous open
+current open  < previous close
 ```
 
-**Reading:**  
-- Price above VWAP = buyers are in control (bullish)  
-- Price below VWAP = sellers are in control (bearish)  
-- Large institutions try to trade close to VWAP — price tends to return to it
+**Bearish Engulfing** (−1.5): Reverse of above. Sellers overwhelmed buyers.
+
+**Hammer** (+1.0): Small body, long lower wick. Sellers tried to push price down but buyers stepped in hard.
+```
+lower_wick > 2 × body_size
+upper_wick < 0.3 × body_size
+```
+
+**Shooting Star** (−1.0): Small body, long upper wick. Buyers tried to push price up but sellers slammed it back.
 
 ---
 
-### 2.10 Pivot Points (Support & Resistance)
-
-Calculated from the previous candle's high, low, and close. Acts as automatic support/resistance.
+## 3. Signal Scoring & Gate
 
 ```
-Pivot     = (prev_high + prev_low + prev_close) / 3
-R1        = 2 × Pivot − prev_low    (first resistance)
-S1        = 2 × Pivot − prev_high   (first support)
+Raw score = sum of all 12 system votes (weighted)
+Max possible raw score ≈ 24  (all systems fully bullish)
+
+Normalised score = raw_score / 24.0   →   range [−1, +1]
+Confidence %     = |score| × 100
+Votes            = count of systems agreeing (positive = bullish, negative = bearish)
 ```
 
-**Reading:**  
-- Price above Pivot = bullish bias for the session  
-- Price below Pivot = bearish bias  
-- R1 and S1 are the first levels where price typically pauses or reverses
+### Signal Gate (both conditions must be true):
 
----
+| Direction | Score condition | Confluence condition |
+|---|---|---|
+| LONG | score ≥ +0.45 | votes ≥ +5 |
+| SHORT | score ≤ −0.45 | votes ≤ −5 |
+| NO SIGNAL | anything else | — |
 
-## 3. Signal Scoring System
+This dual gate eliminates weak setups and requires a true majority of systems to agree before a trade is suggested.
 
-**File:** `indicators/signals.py` → `generate_signals()`
+### Confidence Levels:
 
-Six indicators vote on direction. Each vote adds or subtracts from a raw score, then it's normalized to **−1 to +1**.
-
-| Indicator | LONG votes | SHORT votes | Max contribution |
-|---|---|---|---|
-| EMA alignment | EMA9 > EMA21 > EMA50 → +2 | EMA9 < EMA21 < EMA50 → −2 | ±2 |
-| RSI zone | RSI 50–70 → +1 | RSI 30–50 → −1 | ±1 |
-| MACD crossover | MACD > Signal → +1 | MACD < Signal → −1 | ±1 |
-| ADX strength | ADX > 25 → +1 | (no penalty) | +1 |
-| Bollinger position | Close > BB Mid → +1 | Close < BB Mid → −1 | ±1 |
-| Stochastic | %K > %D and < 80 → +1 | %K < %D and > 20 → −1 | ±1 |
-
-```
-Raw score range: −7 to +8
-Normalized score = raw_score / 8.0   →   range: −0.875 to +1.0
-
-Signal = LONG  if score ≥ +0.40
-Signal = SHORT if score ≤ −0.40
-Signal = NONE  if −0.40 < score < +0.40
-```
-
-**Why a threshold of 0.4?** It requires at least 3–4 indicators to agree before signalling. Single-indicator setups are filtered out.
+| Confidence % | Label |
+|---|---|
+| 75%+ | Very High |
+| 60–74% | High |
+| 45–59% | Medium |
+| < 45% | Low (no signal) |
 
 ---
 
 ## 4. Backtest Engine
 
-**File:** `backtest/engine.py` → `run_backtest()`
+**File:** `backtest/engine.py` → `run_backtest(df, stop_loss_pct, take_profit_pct)`
 
-Simulates trading the strategy on all historical data, one candle at a time.
-
-### How it works step by step:
+Simulates trading the strategy on all historical data, one candle at a time, with $10,000 starting capital.
 
 ```
-Start with $10,000 capital.
 For each candle (oldest → newest):
 
-  IF currently in a trade:
-    pnl_pct = (current_price − entry_price) / entry_price × 100 × direction
-    
-    IF pnl_pct ≤ −stop_loss_pct  →  EXIT (stop loss hit)
-    IF pnl_pct ≥ take_profit_pct →  EXIT (take profit hit)
-    IF signal reversed direction  →  EXIT (signal reversal)
+  IF in a trade:
+    pnl_pct = (price − entry) / entry × 100 × direction
+    (direction = +1 for LONG, −1 for SHORT)
 
-  IF not in a trade AND signal = 1 or −1:
+    IF pnl_pct ≤ −stop_loss_pct   →  EXIT: Stop Loss Hit
+    IF pnl_pct ≥ take_profit_pct  →  EXIT: Take Profit Hit
+    IF signal flipped direction    →  EXIT: Signal Reversal
+
+    On exit: capital × = (1 + pnl_pct / 100)
+
+  IF not in trade AND signal = 1 or −1:
     Enter trade at current close price
-    Record entry_date, entry_price, direction
 
-  Update equity curve: append current capital value
-```
-
-**Direction:** `+1` for LONG, `−1` for SHORT  
-**PnL calculation:**
-```
-LONG:  pnl_pct = (exit − entry) / entry × 100
-SHORT: pnl_pct = (entry − exit) / entry × 100
-Capital update: new_capital = old_capital × (1 + pnl_pct / 100)
+  Append current capital to equity curve
 ```
 
 ---
@@ -283,48 +336,48 @@ Capital update: new_capital = old_capital × (1 + pnl_pct / 100)
 
 ### Win Rate
 ```
-Win Rate = (Number of winning trades / Total closed trades) × 100
+Win Rate = wins / total_closed_trades × 100
 ```
-A 55% win rate means 55 out of 100 trades were profitable.
+Target: > 55%. At 1:2 R:R, you only need 34% to break even.
 
 ### Total Return
 ```
-Total Return = (final_equity / initial_equity − 1) × 100
+Total Return = (final_equity / 10000 − 1) × 100
 ```
 
 ### Max Drawdown
-The worst peak-to-trough loss in equity during the backtest.
+Worst peak-to-trough loss during the entire backtest period.
 ```
-For each point: drawdown = (equity − running_maximum) / running_maximum
-Max Drawdown = minimum drawdown value × 100
+Rolling max = cumulative maximum of equity curve
+Drawdown    = (equity − rolling_max) / rolling_max
+Max Drawdown = min(drawdown) × 100
 ```
-A −25% max drawdown means the strategy once lost 25% from its peak before recovering.
+Target: better than −30%.
 
 ### Sharpe Ratio
-Risk-adjusted return. Measures how much return you get per unit of risk.
+Return per unit of risk. The standard benchmark for institutional strategies.
 ```
-Daily Returns = equity.pct_change()
+Daily returns = equity.pct_change()
 Sharpe = (mean_return / std_return) × √252
 ```
-- Sharpe > 1 = Good  
-- Sharpe > 2 = Excellent  
-- Sharpe < 0 = Losing money on a risk-adjusted basis
+- > 1.0 = Good  
+- > 2.0 = Excellent  
+- < 0 = Losing on risk-adjusted basis
 
 ### Profit Factor
 ```
-Profit Factor = Total Gross Profit / Total Gross Loss
+Profit Factor = sum(winning_pnl) / |sum(losing_pnl)|
 ```
-- PF > 1 = Strategy makes money overall  
-- PF > 1.5 = Good  
-- PF > 2 = Excellent  
-- PF = 1.5 means for every $1 lost, the strategy makes $1.50
+- > 1.0 = Overall profitable  
+- > 1.5 = Good  
+- > 2.0 = Excellent
 
 ### Average Win / Average Loss
 ```
-Avg Win  = mean(pnl_pct) across all winning trades
-Avg Loss = mean(pnl_pct) across all losing trades
+Avg Win  = mean(pnl_pct for winning trades)
+Avg Loss = mean(pnl_pct for losing trades)
 ```
-A good strategy has Avg Win / |Avg Loss| > 1.5 (reward exceeds risk per trade).
+Avg Win / |Avg Loss| should ideally exceed 1.5.
 
 ---
 
@@ -332,92 +385,145 @@ A good strategy has Avg Win / |Avg Loss| > 1.5 (reward exceeds risk per trade).
 
 **File:** `backtest/optimizer.py`
 
-Grid search across all combinations of stop loss and take profit percentages:
+Grid search across 72 SL/TP combinations to find the best risk parameters for the current ticker and timeframe.
 
 ```
-SL values tested: 1.0%, 1.5%, 2.0%, 2.5%, 3.0%
-TP values tested: 2.0%, 3.0%, 4.0%, 5.0%, 6.0%, 8.0%
-Total combinations: 5 × 6 = 30 (minus any where TP ≤ SL)
+SL values: 0.5%, 1.0%, 1.5%, 2.0%, 2.5%, 3.0%, 4.0%, 5.0%  (8 values)
+TP values: 1.5%, 2.0%, 3.0%, 4.0%, 5.0%, 6.0%, 8.0%, 10.0%, 12.0%  (9 values)
 
-For each combination:
-  Run full backtest
-  Score = (win_rate / 100) × profit_factor
-  Keep the combination with the highest score
+Filter: only test combinations where TP / SL ≥ 1.5  (minimum 1:1.5 R:R)
+Filter: skip combinations with fewer than 5 trades
+
+Scoring formula:
+  sharpe_bonus = max(0, sharpe) / 10
+  score = (win_rate / 100) × profit_factor × (1 + sharpe_bonus)
+
+Keep the SL/TP pair with the highest score.
 ```
 
-**Why this scoring formula?** Win rate alone is misleading (a 90% win rate with −50% losses is terrible). Profit factor alone is misleading too. Multiplying them penalises both extremes and rewards balanced strategies.
+The Sharpe bonus rewards strategies that are not just profitable but **consistent** — low volatility of returns. This is how institutional desks evaluate strategies.
 
 ---
 
-## 7. Trade Persistence
+## 7. Trade Persistence (SQLite)
 
 **File:** `data/trade_store.py`  
-**Database:** `trades.db` (SQLite, local file)
+**Database:** `trades.db` (local SQLite file, never sent anywhere)
 
-### How a trade is recorded:
+### Schema:
+```sql
+CREATE TABLE trades (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker       TEXT,
+    timeframe    TEXT,
+    direction    TEXT,       -- LONG / SHORT
+    entry_date   TEXT,
+    entry_price  REAL,       -- set once, never changes
+    sl_price     REAL,
+    tp_price     REAL,
+    sl_pct       REAL,
+    tp_pct       REAL,
+    signal_score REAL,
+    exit_date    TEXT,
+    exit_price   REAL,
+    pnl_pct      REAL,
+    status       TEXT,       -- OPEN / TP_HIT / SL_HIT / MANUAL
+    quantity     REAL        -- always 1.0
+)
+```
 
-1. Signal fires (score ≥ 0.4 for LONG, ≤ −0.4 for SHORT)
-2. `open_trade()` is called — **only writes if no OPEN trade exists for that ticker+timeframe**
-3. Entry price is set once and never changed
-4. SL and TP prices are calculated:
-   ```
-   LONG:  SL = entry × (1 − sl_pct/100),  TP = entry × (1 + tp_pct/100)
-   SHORT: SL = entry × (1 + sl_pct/100),  TP = entry × (1 − tp_pct/100)
-   ```
+### Entry price protection:
+`open_trade()` checks for an existing OPEN trade for the same ticker+timeframe before inserting. If one exists, it returns the existing ID without any change. This is why the entry price never resets on page refresh.
 
-### Auto-close logic (`maybe_auto_close()`):
-
-Every 10–15 seconds, the live price is checked against the stored SL/TP:
+### Auto-close logic (runs every 10–15 seconds):
 ```
 LONG pnl  = (live_price − entry_price) / entry_price × 100
 SHORT pnl = (entry_price − live_price) / entry_price × 100
 
-If pnl ≤ −sl_pct  →  close trade as SL_HIT
-If pnl ≥  tp_pct  →  close trade as TP_HIT
+If pnl ≤ −sl_pct  →  SL_HIT
+If pnl ≥  tp_pct  →  TP_HIT
 ```
 
 ---
 
-## 8. Screener
+## 8. Screener & Browser Notifications
 
 **File:** `data/screener_store.py`
 
-Watchlist stored in SQLite (`screener_watchlist` table). Every 60 seconds, the scanner:
+### Schema:
+```sql
+CREATE TABLE screener_watchlist (
+    ticker    TEXT UNIQUE,
+    timeframe TEXT,
+    added_at  TEXT
+)
 
-1. Fetches OHLCV for each watched ticker
-2. Runs `generate_signals()` to get the current signal
-3. Compares to the last known signal (stored in `st.session_state.screener_last`)
-4. If signal **changed** from 0 → 1 (or 0 → −1): fires a browser notification + in-app toast + logs to `screener_alerts` table
-5. Same signal as before: no alert (prevents spam)
+CREATE TABLE screener_alerts (
+    ticker    TEXT,
+    timeframe TEXT,
+    signal    TEXT,   -- LONG / SHORT
+    score     REAL,
+    price     REAL,
+    fired_at  TEXT
+)
+```
+
+### Scan logic (runs every 60 seconds):
+```
+For each ticker in watchlist:
+  1. Fetch latest OHLCV
+  2. Run full signal computation (all 12 systems)
+  3. Get current signal (1, -1, or 0)
+  4. Compare to last known signal in session state
+  5. If signal changed from 0 → 1 or 0 → −1:
+       - Log alert to screener_alerts table
+       - Fire browser push notification (Notification API)
+       - Show in-app st.toast()
+       - Update last known signal
+```
+
+**Why "changed from 0"?** To avoid sending a notification every 60 seconds for a signal that's already been active. Only fires once per new signal.
 
 ---
 
-## 9. Signal Quality Summary
+## 9. Asset Coverage
 
-| Score Range | Signal | Meaning |
+| Category | Tickers | Exchange |
 |---|---|---|
-| 0.75 to 1.0 | Strong LONG | 6–8 indicators aligned bullish |
-| 0.40 to 0.74 | LONG | Majority bullish |
-| −0.39 to +0.39 | NO SIGNAL | Mixed — too risky to trade |
-| −0.40 to −0.74 | SHORT | Majority bearish |
-| −0.75 to −1.0 | Strong SHORT | 6–8 indicators aligned bearish |
+| Crypto | BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX, MATIC, DOT | Binance (via Yahoo) |
+| Metals | Gold (GC=F), Silver (SI=F), Platinum (PL=F), Palladium (PA=F), Copper (HG=F) | COMEX |
+| Energy | WTI Oil (CL=F), Brent Oil (BZ=F), Natural Gas (NG=F), Gasoline (RB=F) | NYMEX |
+| US Stocks | AAPL, MSFT, GOOGL, AMZN, NVDA, TSLA, META, NFLX, AMD, INTC, JPM, BAC, V, MA, WMT | NASDAQ / NYSE |
+| Indices | S&P 500, Dow, Nasdaq, Nifty, Sensex, FTSE, Nikkei, Hang Seng | Various |
+| Forex | EUR/USD, GBP/USD, USD/JPY, AUD/USD, USD/CAD, USD/INR | Forex |
+| Commodities | Wheat, Corn, Soy, Coffee, Cotton | CBOT / ICEUS |
+| Any ticker | Type any Yahoo Finance symbol in the search box | Yahoo Finance |
 
 ---
 
-## 10. Risk/Reward Ratio
+## 10. Signal Quality Summary
+
+| Score | Votes | Signal | Quality |
+|---|---|---|---|
+| ≥ 0.75 | 8–12 systems | Strong LONG | Institutional-grade setup |
+| 0.45–0.74 | 5–7 systems | LONG | High conviction |
+| −0.44 to +0.44 | < 5 systems | NO SIGNAL | Too risky — wait |
+| −0.45 to −0.74 | 5–7 systems | SHORT | High conviction |
+| ≤ −0.75 | 8–12 systems | Strong SHORT | Institutional-grade setup |
+
+---
+
+## 11. Risk / Reward
 
 ```
 R:R = take_profit_pct / stop_loss_pct
 ```
 
-| R:R | Rating | Meaning |
+| R:R | Rating | Break-even win rate needed |
 |---|---|---|
-| ≥ 2.5 | Excellent | You make 2.5× what you risk per trade |
-| 2.0–2.4 | Good | |
-| 1.5–1.9 | OK | Minimum acceptable |
-| < 1.5 | Poor | Not worth taking — need win rate > 70% to be profitable |
+| ≥ 2.5 | Excellent | 29% |
+| 2.0–2.4 | Good | 33% |
+| 1.5–1.9 | OK | 40% |
+| < 1.5 | Poor | > 40% |
 
-**Why R:R matters more than win rate:**  
-At 1:2 R:R, you only need a **34% win rate** to break even.  
-At 1:0.5 R:R, you need a **67% win rate** just to break even.  
-This is why professional traders focus on R:R first, win rate second.
+**The key insight:** A 45% win rate at 1:2.5 R:R is more profitable than a 70% win rate at 1:0.5 R:R. This is why the optimizer enforces a minimum 1:1.5 R:R on all combinations it tests.
