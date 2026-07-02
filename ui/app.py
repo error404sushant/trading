@@ -604,7 +604,7 @@ with tab2:
                       <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">TRADES</div>
                     </div>
                     <div style="text-align:center;">
-                      <div style="font-size:1.6rem;font-weight:900;color:{'#16a34a' if r.total_return>0 else '#dc2626'};">{r.total_return:.0f}%</div>
+                      <div style="font-size:1.6rem;font-weight:900;color:{'#16a34a' if r.total_return>0 else '#dc2626'};">{r.total_return:+.1f}%</div>
                       <div style="font-size:0.65rem;color:#6b7280;margin-top:2px;">RETURN</div>
                     </div>
                     <div style="text-align:center;">
@@ -650,7 +650,7 @@ with tab2:
                 (c2, str(result.n_trades),             "Total Trades", True),
                 (c3, str(wins),                        "Wins",         True),
                 (c4, str(losses),                      "Losses",       False),
-                (c5, f"{result.total_return:.0f}%",    "Total Return", result.total_return>0),
+                (c5, f"{result.total_return:+.1f}%",   "Total Return", result.total_return>0),
                 (c6, f"{result.avg_win:+.2f}%",        "Avg Win",      True),
                 (c7, f"{result.avg_loss:+.2f}%",       "Avg Loss",     False),
                 (c8, f"{result.profit_factor:.2f}",    "Profit Factor",result.profit_factor>1.5),
