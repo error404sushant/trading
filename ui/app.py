@@ -1,0 +1,600 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+
+from data.fetcher import fetch_ohlcv, get_live_price
+from data.trade_store import get_open_trade, open_trade, close_trade, maybe_auto_close, get_all_trades, init_db
+from indicators.signals import generate_signals
+from backtest.engine import run_backtest
+from backtest.optimizer import optimize
+
+init_db()
+
+# ── Popular tickers for autocomplete ─────────────────────────────────────────
+POPULAR = {
+    "Crypto":   ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"],
+    "US Stocks":["AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","META","NFLX","AMD","INTC","JPM","BAC","V","MA","WMT"],
+    "Indices":  ["^GSPC","^DJI","^IXIC","^NSEI","^BSESN","^FTSE","^N225","^HSI"],
+    "Forex":    ["EURUSD=X","GBPUSD=X","USDJPY=X","AUDUSD=X","USDCAD=X","USDINR=X"],
+    "Commodities":["GC=F","SI=F","CL=F","NG=F","ZW=F"],
+}
+ALL_TICKERS = [t for group in POPULAR.values() for t in group]
+
+TV_SYMBOL_MAP = {
+    "BTC-USD":"BINANCE:BTCUSDT","ETH-USD":"BINANCE:ETHUSDT","SOL-USD":"BINANCE:SOLUSDT",
+    "BNB-USD":"BINANCE:BNBUSDT","XRP-USD":"BINANCE:XRPUSDT","ADA-USD":"BINANCE:ADAUSDT",
+    "DOGE-USD":"BINANCE:DOGEUSDT","AVAX-USD":"BINANCE:AVAXUSDT","MATIC-USD":"BINANCE:MATICUSDT",
+    "DOT-USD":"BINANCE:DOTUSDT",
+    "AAPL":"NASDAQ:AAPL","MSFT":"NASDAQ:MSFT","GOOGL":"NASDAQ:GOOGL","AMZN":"NASDAQ:AMZN",
+    "NVDA":"NASDAQ:NVDA","TSLA":"NASDAQ:TSLA","META":"NASDAQ:META","NFLX":"NASDAQ:NFLX",
+    "AMD":"NASDAQ:AMD","INTC":"NASDAQ:INTC","JPM":"NYSE:JPM","BAC":"NYSE:BAC",
+    "V":"NYSE:V","MA":"NYSE:MA","WMT":"NYSE:WMT",
+    "^GSPC":"SP:SPX","^DJI":"DJ:DJI","^IXIC":"NASDAQ:IXIC",
+    "^NSEI":"NSE:NIFTY50","^BSESN":"BSE:SENSEX","^FTSE":"LSE:UKX","^N225":"TVC:NI225",
+    "EURUSD=X":"FX:EURUSD","GBPUSD=X":"FX:GBPUSD","USDJPY=X":"FX:USDJPY",
+    "AUDUSD=X":"FX:AUDUSD","USDCAD=X":"FX:USDCAD","USDINR=X":"FX:USDINR",
+    "GC=F":"TVC:GOLD","SI=F":"TVC:SILVER","CL=F":"TVC:USOIL","NG=F":"TVC:NATURALGAS",
+}
+
+def get_tv_symbol(ticker: str) -> str:
+    return TV_SYMBOL_MAP.get(ticker, ticker.replace("-USD","USDT").replace("=X","").replace("^","").replace("-",""))
+
+def chat_reply(q: str, ctx: str) -> str:
+    q = q.lower()
+    if any(w in q for w in ["signal","buy","sell","long","short","trade","enter"]):
+        if "LONG" in ctx:
+            return "📈 **LONG signal is active.** Enter at the current price shown, set your stop loss at the SL level, and target the TP level. Never risk more than 1-2% of capital per trade."
+        elif "SHORT" in ctx:
+            return "📉 **SHORT signal is active.** Sell short at the current price, stop loss above entry, take profit at the TP level."
+        else:
+            return "⚠️ **No signal right now.** The market isn't giving a clean setup. Patience is key — wait for indicators to align before entering."
+    elif "rsi" in q:
+        return "**RSI:** Below 30 = oversold (bounce possible). Above 70 = overbought (drop possible). 40–60 = neutral, avoid trading."
+    elif "macd" in q:
+        return "**MACD:** MACD line above signal line = bullish momentum. Below = bearish. Histogram growing = momentum accelerating."
+    elif "stop" in q or " sl" in q:
+        return "**Stop Loss:** Exit point if trade goes wrong. Never move it away from entry — it exists to protect your capital."
+    elif "tp" in q or "profit" in q or "target" in q:
+        return "**Take Profit:** Lock in gains when price hits this level. Don't be greedy. A hit TP is a winning trade."
+    elif "ema" in q or "moving" in q:
+        return "**EMAs:** EMA9 > EMA21 > EMA50 = strong uptrend. Reverse order = downtrend. Signal fires when multiple EMAs align."
+    elif "adx" in q:
+        return "**ADX > 25** = trending market, signals are reliable. ADX < 20 = choppy, signals often fail — avoid trading."
+    elif "win" in q or "accuracy" in q:
+        return "A 55% win rate with 1:2 risk/reward beats a 70% win rate with 1:0.5. Risk/reward matters more than win rate alone."
+    elif "backtest" in q:
+        return "The backtest tab shows how this strategy performed historically on real price data. Check Profit Factor (>1.5 is good) and Sharpe Ratio (>1 is good)."
+    else:
+        return "Ask me: **signal, long, short, stop loss, take profit, RSI, MACD, EMA, ADX, win rate, backtest**."
+
+
+st.set_page_config(page_title="Trading Signals", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+
+st.markdown("""
+<style>
+/* Light theme overrides */
+[data-testid="stAppViewContainer"] { background:#ffffff; }
+[data-testid="stSidebar"] { background:#f8f9fc; border-right:1px solid #e0e4ef; }
+[data-testid="stHeader"] { background:#ffffff; border-bottom:1px solid #e0e4ef; }
+section[data-testid="stSidebar"] > div { padding-top:1rem; }
+
+/* Signal boxes */
+.sig-long  { background:#f0fff4; border:2px solid #22c55e; border-radius:12px; padding:24px; text-align:center; }
+.sig-short { background:#fff5f5; border:2px solid #ef4444; border-radius:12px; padding:24px; text-align:center; }
+.sig-none  { background:#fffbf0; border:2px solid #f59e0b; border-radius:12px; padding:24px; text-align:center; }
+.sig-type  { font-size:2rem; font-weight:900; letter-spacing:3px; }
+.sig-sub   { font-size:0.82rem; color:#6b7280; margin-top:6px; }
+
+/* Price box */
+.price-box { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:12px; padding:20px; text-align:center; }
+.live-dot  { display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:50%;animation:blink 1.2s infinite; }
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+
+/* Level cards */
+.lvl { background:#f8f9fc; border-radius:10px; padding:16px 14px; text-align:center; border:1px solid #e0e4ef; }
+.lvl-val { font-size:1.4rem; font-weight:800; }
+.lvl-lbl { font-size:0.68rem; color:#6b7280; margin-top:3px; text-transform:uppercase; letter-spacing:.5px; }
+.lvl-sub { font-size:0.78rem; margin-top:3px; }
+
+/* No signal box */
+.no-sig { background:#fffbf0; border:1px dashed #f59e0b; border-radius:12px; padding:36px; text-align:center; }
+
+/* Indicator chips */
+.chip { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:6px; padding:8px 10px; text-align:center; }
+.chip-val { font-size:0.9rem; font-weight:700; }
+.chip-lbl { font-size:0.65rem; color:#6b7280; margin-top:2px; }
+
+/* Suggestion grid */
+.sugg-btn button { font-size:0.72rem !important; padding:4px 8px !important; height:auto !important; }
+
+/* Section headers */
+.sec-hdr { font-size:0.75rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin:8px 0 4px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ── Session state ─────────────────────────────────────────────────────────────
+for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
+            ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),
+            ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}])]:
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+
+    # ══ ACTIVE TRADES — top, always visible ══════════════════════════════════
+    @st.fragment(run_every=10)
+    def sidebar_active_trades():
+        seen, unique = set(), []
+        for sym in ALL_TICKERS + [st.session_state.ticker]:
+            t = get_open_trade(sym, st.session_state.tf)
+            if t and t["id"] not in seen:
+                seen.add(t["id"])
+                unique.append(t)
+
+        if not unique:
+            return
+
+        st.markdown("""
+        <div style="font-size:0.7rem;font-weight:700;color:#6b7280;
+             text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">
+          ⚡ Active Trades
+        </div>""", unsafe_allow_html=True)
+
+        for t in unique:
+            lp  = get_live_price(t["ticker"])["price"]
+            d   = 1 if t["direction"] == "LONG" else -1
+            pnl = (lp - t["entry_price"]) / t["entry_price"] * 100 * d if lp > 0 else 0
+            pnl_usd = (lp - t["entry_price"]) * d
+            pc  = "#16a34a" if pnl >= 0 else "#dc2626"
+            bg  = "#f0fff4" if pnl >= 0 else "#fff5f5"
+            bc  = "#22c55e" if pnl >= 0 else "#ef4444"
+            tag = "▲ LONG" if d == 1 else "▼ SHORT"
+            tag_c = "#16a34a" if d == 1 else "#dc2626"
+            hit = maybe_auto_close(t["id"], lp) if lp > 0 else None
+
+            st.markdown(f"""
+            <div style="background:{bg};border-left:4px solid {bc};
+                 border-radius:8px;padding:10px 12px;margin-bottom:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;">
+                <span style="font-weight:800;font-size:0.92rem;color:#111827;">{t['ticker']}</span>
+                <span style="font-weight:900;font-size:1.05rem;color:{pc};">{pnl:+.2f}%</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:2px;">
+                <span style="font-size:0.7rem;font-weight:700;color:{tag_c};">{tag}</span>
+                <span style="font-size:0.7rem;color:{pc};font-weight:600;">${pnl_usd:+,.2f}</span>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:0.72rem;color:#374151;">
+                <span>In&nbsp;<b>${t['entry_price']:,.2f}</b></span>
+                <span>Now&nbsp;<b>${lp:,.2f}</b></span>
+              </div>
+              <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:0.68rem;">
+                <span style="color:#dc2626;">SL&nbsp;${t['sl_price']:,.2f}</span>
+                <span style="color:#16a34a;">TP&nbsp;${t['tp_price']:,.2f}</span>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+            if not hit:
+                if st.button(f"Close {t['ticker']}", key=f"cl_{t['id']}",
+                             use_container_width=True):
+                    close_trade(t["id"], lp, "MANUAL")
+                    st.rerun()
+
+        st.divider()
+
+    sidebar_active_trades()
+
+    # ══ Symbol search & picker ════════════════════════════════════════════════
+    st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
+         text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+      Symbol
+    </div>""", unsafe_allow_html=True)
+
+    search_val = st.text_input("", value=st.session_state.ticker,
+                               placeholder="BTC-USD, AAPL, EURUSD=X…",
+                               label_visibility="collapsed")
+
+    # Inline suggestions while typing
+    if search_val and search_val.upper() != st.session_state.ticker:
+        matches = [t for t in ALL_TICKERS if search_val.upper() in t][:6]
+        if matches:
+            cols = st.columns(2)
+            for i, m in enumerate(matches):
+                if cols[i%2].button(m, key=f"s_{m}", use_container_width=True):
+                    st.session_state.ticker = m
+                    st.rerun()
+        elif len(search_val) >= 2:
+            # User typed custom symbol not in list — accept on Enter
+            if st.button(f"Load  {search_val.upper()}", use_container_width=True, type="primary"):
+                st.session_state.ticker = search_val.upper()
+                st.rerun()
+
+    # Popular picker
+    for category, tickers in POPULAR.items():
+        with st.expander(category, expanded=(category == "Crypto")):
+            cols = st.columns(2)
+            for i, t in enumerate(tickers):
+                is_active = (t == st.session_state.ticker)
+                if cols[i%2].button(t, key=f"p_{t}", use_container_width=True,
+                                    type="primary" if is_active else "secondary"):
+                    st.session_state.ticker = t
+                    st.rerun()
+
+    st.divider()
+    timeframe = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
+                             index=6, key="tf_select")
+    st.session_state.tf = timeframe
+    auto_opt  = st.checkbox("Auto-optimize SL/TP", value=True)
+    if not auto_opt:
+        sl_pct = st.slider("Stop Loss %",  0.5, 10.0, 2.0, 0.5)
+        tp_pct = st.slider("Take Profit %", 1.0, 20.0, 4.0, 0.5)
+    else:
+        sl_pct = st.session_state.opt_sl
+        tp_pct = st.session_state.opt_tp
+
+ticker    = st.session_state.ticker
+timeframe = st.session_state.tf
+
+# ── Auto-load whenever ticker or timeframe changes (no button needed) ─────────
+current_key = f"{ticker}|{timeframe}"
+needs_load  = (current_key != st.session_state.loaded_key)
+
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab1, tab2, tab3 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat"])
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SIGNAL + CHART TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab1:
+    if needs_load:
+        st.session_state.loaded_key = current_key
+        try:
+            with st.spinner(f"Loading {ticker} {timeframe}…"):
+                df_raw = fetch_ohlcv(ticker, interval=timeframe)
+                df     = generate_signals(df_raw)
+            st.session_state.df = df
+
+            if auto_opt:
+                with st.spinner("Optimizing SL/TP…"):
+                    opt = optimize(df)
+                if opt["result"]:
+                    st.session_state.opt_sl = opt["params"]["stop_loss_pct"]
+                    st.session_state.opt_tp = opt["params"]["take_profit_pct"]
+                    st.session_state.result = opt["result"]
+            else:
+                st.session_state.opt_sl = sl_pct
+                st.session_state.opt_tp = tp_pct
+                st.session_state.result = run_backtest(df, sl_pct, tp_pct)
+        except Exception as e:
+            st.error(f"Could not load **{ticker}**: {e}")
+            st.info("Try: BTC-USD, ETH-USD, AAPL, TSLA, EURUSD=X, GC=F")
+
+    if st.session_state.df is not None:
+        df      = st.session_state.df
+        last    = df.iloc[-1]
+        sig     = int(last["signal"])
+        used_sl = st.session_state.opt_sl
+        used_tp = st.session_state.opt_tp
+        score   = last["score"]
+        # Use live price for trade level calculations
+        _live   = get_live_price(ticker)
+        price   = _live["price"] if _live["price"] > 0 else last["close"]
+
+        # ── Auto-record signal into DB (only once, never overwrites) ──────────
+        if sig == 1 and price > 0:
+            sl_p = price * (1 - used_sl / 100)
+            tp_p = price * (1 + used_tp / 100)
+            open_trade(ticker, timeframe, "LONG", price, sl_p, tp_p, used_sl, used_tp, score)
+        elif sig == -1 and price > 0:
+            sl_p = price * (1 + used_sl / 100)
+            tp_p = price * (1 - used_tp / 100)
+            open_trade(ticker, timeframe, "SHORT", price, sl_p, tp_p, used_sl, used_tp, score)
+
+        # Auto-close if SL/TP hit
+        db_trade = get_open_trade(ticker, timeframe)
+        if db_trade and price > 0:
+            hit = maybe_auto_close(db_trade["id"], price)
+            if hit:
+                db_trade = None   # just closed
+
+        # ── Signal + Price ────────────────────────────────────────────────────
+        col_sig, col_price = st.columns([3, 1])
+
+        with col_sig:
+            if sig == 1:
+                st.markdown(f"""<div class="sig-long">
+                  <div class="sig-type" style="color:#16a34a;">🟢 &nbsp;LONG</div>
+                  <div class="sig-sub">Strong buy signal &nbsp;·&nbsp; Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%</div>
+                </div>""", unsafe_allow_html=True)
+            elif sig == -1:
+                st.markdown(f"""<div class="sig-short">
+                  <div class="sig-type" style="color:#dc2626;">🔴 &nbsp;SHORT</div>
+                  <div class="sig-sub">Strong sell signal &nbsp;·&nbsp; Score {score:.2f} &nbsp;·&nbsp; SL {used_sl}% &nbsp;·&nbsp; TP {used_tp}%</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                reasons = []
+                if last["adx"] < 20:           reasons.append(f"ADX {last['adx']:.0f} — no trend")
+                if 40 < last["rsi"] < 60:      reasons.append(f"RSI {last['rsi']:.0f} — neutral zone")
+                if last["macd"] > last["macd_signal"] and last["ema_9"] < last["ema_21"]:
+                    reasons.append("MACD & EMA conflict")
+                if abs(score) < 0.4:           reasons.append(f"Score {score:.2f} too weak")
+                reason = " · ".join(reasons) if reasons else f"Score {score:.2f} — indicators not aligned"
+                st.markdown(f"""<div class="sig-none">
+                  <div class="sig-type" style="color:#d97706;">⚠️ &nbsp;NO SIGNAL</div>
+                  <div class="sig-sub">Not a good time to trade &nbsp;·&nbsp; {reason}</div>
+                  <div style="font-size:0.78rem;color:#9ca3af;margin-top:8px;">Wait for a cleaner setup or try a different timeframe.</div>
+                </div>""", unsafe_allow_html=True)
+
+        with col_price:
+            @st.fragment(run_every=15)
+            def live_price_box():
+                live = get_live_price(ticker)
+                p    = live["price"]
+                chg  = live["change_pct"]
+                chg_color = "#16a34a" if chg >= 0 else "#dc2626"
+                st.markdown(f"""<div class="price-box">
+                  <div style="font-size:0.72rem;color:#6b7280;"><span class="live-dot"></span> &nbsp;LIVE &nbsp;·&nbsp; {ticker}</div>
+                  <div style="font-size:2rem;font-weight:900;color:#111827;margin-top:6px;">${p:,.2f}</div>
+                  <div style="color:{chg_color};font-size:0.9rem;margin-top:4px;">{'+' if chg>=0 else ''}{chg:.2f}% today</div>
+                  <div style="font-size:0.65rem;color:#9ca3af;margin-top:4px;">Updates every 15s</div>
+                </div>""", unsafe_allow_html=True)
+            live_price_box()
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Trade levels (only when signal exists) ────────────────────────────
+        if sig == 1:
+            sl_p = price * (1 - used_sl/100)
+            tp_p = price * (1 + used_tp/100)
+            rr   = used_tp / used_sl
+            rc   = "#16a34a" if rr >= 1.5 else "#d97706"
+            st.markdown("#### 📐 Trade Setup — LONG")
+            c1,c2,c3,c4 = st.columns(4)
+            with c1:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #22c55e;">
+                  <div class="lvl-lbl">📍 Entry (Long)</div>
+                  <div class="lvl-val" style="color:#16a34a;">${price:,.2f}</div>
+                  <div class="lvl-sub" style="color:#6b7280;">Buy here</div>
+                </div>""", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #ef4444;">
+                  <div class="lvl-lbl">🛑 Stop Loss</div>
+                  <div class="lvl-val" style="color:#dc2626;">${sl_p:,.2f}</div>
+                  <div class="lvl-sub" style="color:#dc2626;">-{used_sl}% · Exit if broken</div>
+                </div>""", unsafe_allow_html=True)
+            with c3:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #22c55e;">
+                  <div class="lvl-lbl">🎯 Take Profit</div>
+                  <div class="lvl-val" style="color:#16a34a;">${tp_p:,.2f}</div>
+                  <div class="lvl-sub" style="color:#16a34a;">+{used_tp}% · Lock gains</div>
+                </div>""", unsafe_allow_html=True)
+            with c4:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid {rc};">
+                  <div class="lvl-lbl">⚖️ Risk / Reward</div>
+                  <div class="lvl-val" style="color:{rc};">1 : {rr:.1f}</div>
+                  <div class="lvl-sub" style="color:{rc};">{'Excellent' if rr>=2.5 else 'Good' if rr>=2 else 'OK' if rr>=1.5 else 'Poor'}</div>
+                </div>""", unsafe_allow_html=True)
+
+        elif sig == -1:
+            sl_p = price * (1 + used_sl/100)
+            tp_p = price * (1 - used_tp/100)
+            rr   = used_tp / used_sl
+            rc   = "#16a34a" if rr >= 1.5 else "#d97706"
+            st.markdown("#### 📐 Trade Setup — SHORT")
+            c1,c2,c3,c4 = st.columns(4)
+            with c1:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #ef4444;">
+                  <div class="lvl-lbl">📍 Entry (Short)</div>
+                  <div class="lvl-val" style="color:#dc2626;">${price:,.2f}</div>
+                  <div class="lvl-sub" style="color:#6b7280;">Sell here</div>
+                </div>""", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #ef4444;">
+                  <div class="lvl-lbl">🛑 Stop Loss</div>
+                  <div class="lvl-val" style="color:#dc2626;">${sl_p:,.2f}</div>
+                  <div class="lvl-sub" style="color:#dc2626;">+{used_sl}% · Exit if broken</div>
+                </div>""", unsafe_allow_html=True)
+            with c3:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid #22c55e;">
+                  <div class="lvl-lbl">🎯 Take Profit</div>
+                  <div class="lvl-val" style="color:#16a34a;">${tp_p:,.2f}</div>
+                  <div class="lvl-sub" style="color:#16a34a;">-{used_tp}% · Lock gains</div>
+                </div>""", unsafe_allow_html=True)
+            with c4:
+                st.markdown(f"""<div class="lvl" style="border-top:3px solid {rc};">
+                  <div class="lvl-lbl">⚖️ Risk / Reward</div>
+                  <div class="lvl-val" style="color:{rc};">1 : {rr:.1f}</div>
+                  <div class="lvl-sub" style="color:{rc};">{'Excellent' if rr>=2.5 else 'Good' if rr>=2 else 'OK' if rr>=1.5 else 'Poor'}</div>
+                </div>""", unsafe_allow_html=True)
+
+        # ── Indicator chips ───────────────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        i1,i2,i3,i4,i5,i6 = st.columns(6)
+        for col, lbl, val, ok in [
+            (i1,"RSI",  f"{last['rsi']:.0f}",    30<last['rsi']<70),
+            (i2,"ADX",  f"{last['adx']:.0f}",    last['adx']>25),
+            (i3,"MACD", "Bull" if last['macd']>last['macd_signal'] else "Bear", last['macd']>last['macd_signal']),
+            (i4,"EMA 9/21","Bull" if last['ema_9']>last['ema_21'] else "Bear", last['ema_9']>last['ema_21']),
+            (i5,"Stoch",f"{last['stoch_k']:.0f}", 20<last['stoch_k']<80),
+            (i6,"BB %", f"{last['bb_pct']:.2f}",  0.2<last['bb_pct']<0.8),
+        ]:
+            icon  = "🟢" if ok else "🔴"
+            color = "#16a34a" if ok else "#dc2626"
+            with col:
+                st.markdown(f"""<div class="chip">
+                  <div class="chip-val" style="color:{color};">{icon} {val}</div>
+                  <div class="chip-lbl">{lbl}</div>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # ── TradingView — ONLY chart, full size ───────────────────────────────
+        tv_sym = get_tv_symbol(ticker)
+        tv_iv_map = {"1m":"1","5m":"5","15m":"15","30m":"30","1h":"60","4h":"240","1d":"D","1w":"W"}
+        tv_iv = tv_iv_map.get(timeframe, "D")
+
+        st.components.v1.html(f"""
+        <div style="border-radius:12px;overflow:hidden;border:1px solid #e0e4ef;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+          <div id="tv_main"></div>
+        </div>
+        <script src="https://s3.tradingview.com/tv.js"></script>
+        <script>
+        new TradingView.widget({{
+          "width":  "100%",
+          "height": 580,
+          "symbol": "{tv_sym}",
+          "interval": "{tv_iv}",
+          "timezone": "Etc/UTC",
+          "theme": "light",
+          "style": "1",
+          "locale": "en",
+          "toolbar_bg": "#ffffff",
+          "allow_symbol_change": true,
+          "withdateranges": true,
+          "hide_side_toolbar": false,
+          "studies": ["RSI@tv-basicstudies","MACD@tv-basicstudies","BB@tv-basicstudies"],
+          "container_id": "tv_main",
+          "save_image": false,
+          "show_popup_button": false,
+          "popup_width": "1000",
+          "popup_height": "650"
+        }});
+        </script>
+        """, height=600)
+
+        st.caption("💡 Click the symbol name in TradingView to search any ticker. Update the sidebar symbol to get signals.")
+
+    else:
+        st.markdown("""
+        <div style="text-align:center;padding:80px 20px;color:#6b7280;">
+          <div style="font-size:3.5rem;">📈</div>
+          <div style="font-size:1.2rem;margin-top:14px;color:#111827;font-weight:600;">Select a symbol to auto-load signals</div>
+          <div style="margin-top:8px;font-size:0.88rem;">
+            Use the sidebar to pick from popular symbols or type any Yahoo Finance ticker
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BACKTEST TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab2:
+    result = st.session_state.result
+    if result:
+        wr = result.win_rate
+        c1,c2,c3,c4,c5,c6 = st.columns(6)
+        for col,val,lbl,ok in [
+            (c1, f"{wr:.1f}%",                "Win Rate",     wr>=55),
+            (c2, str(result.n_trades),         "Total Trades", True),
+            (c3, f"{result.total_return:.0f}%","Total Return", result.total_return>0),
+            (c4, f"{result.max_drawdown:.1f}%","Max Drawdown", False),
+            (c5, f"{result.sharpe:.2f}",       "Sharpe Ratio", result.sharpe>1),
+            (c6, f"{result.profit_factor:.2f}","Profit Factor",result.profit_factor>1.5),
+        ]:
+            color = "#16a34a" if ok else "#dc2626"
+            with col:
+                st.markdown(f"""<div class="lvl">
+                  <div class="lvl-lbl">{lbl}</div>
+                  <div class="lvl-val" style="color:{color};">{val}</div>
+                </div>""", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        fig2 = go.Figure(go.Scatter(
+            x=result.equity.index, y=result.equity.values,
+            fill="tozeroy", mode="lines",
+            line=dict(color="#2962FF", width=2.5, shape="spline", smoothing=0.5),
+            fillcolor="rgba(41,98,255,0.08)",
+        ))
+        fig2.update_layout(
+            height=280, template="plotly_white",
+            paper_bgcolor="#ffffff", plot_bgcolor="#fafbff",
+            title=f"Equity Curve — {ticker} {timeframe} (start $10,000)",
+            margin=dict(l=0,r=0,t=40,b=0),
+            font=dict(color="#111827"),
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── Section 1: Real signal trades from DB ─────────────────────────────
+        st.markdown("### 🔴 My Trades (Real Signals)")
+        db_trades = get_all_trades(ticker, timeframe, limit=200)
+        live_p    = get_live_price(ticker)["price"] if db_trades else 0
+
+        if db_trades:
+            rows = []
+            for t in db_trades:
+                is_open   = t["status"] == "OPEN"
+                direction = 1 if t["direction"] == "LONG" else -1
+                if is_open and live_p > 0:
+                    pnl        = (live_p - t["entry_price"]) / t["entry_price"] * 100 * direction
+                    pnl_str    = f"{pnl:+.2f}% (live)"
+                    result_str = "⏳ OPEN"
+                    exit_str   = f"${live_p:,.2f} (now)"
+                elif t["pnl_pct"] is not None:
+                    pnl_str    = f"{t['pnl_pct']:+.2f}%"
+                    result_str = {"TP_HIT":"🎯 TP HIT","SL_HIT":"🛑 SL HIT","MANUAL":"✋ MANUAL"}.get(t["status"], "✅ WIN" if t["pnl_pct"] > 0 else "❌ LOSS")
+                    exit_str   = f"${t['exit_price']:,.2f}" if t["exit_price"] else "—"
+                else:
+                    pnl_str, result_str, exit_str = "—", "—", "—"
+
+                rows.append({
+                    "Status":     result_str,
+                    "Type":       f"🟢 {t['direction']}" if t["direction"] == "LONG" else f"🔴 {t['direction']}",
+                    "Entry Date": t["entry_date"][:16],
+                    "Entry $":    f"${t['entry_price']:,.2f}",
+                    "Exit $":     exit_str,
+                    "Exit Date":  t["exit_date"][:16] if t["exit_date"] else "—",
+                    "PnL %":      pnl_str,
+                    "SL $":       f"${t['sl_price']:,.2f}",
+                    "TP $":       f"${t['tp_price']:,.2f}",
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, height=250)
+        else:
+            st.caption("No real trades yet — signals are recorded automatically when they fire.")
+
+        st.markdown("---")
+
+        # ── Section 2: Historical backtest trades ─────────────────────────────
+        st.markdown("### 📊 Historical Backtest Trades")
+        st.caption(f"All {result.n_trades} trades from the backtest — newest first")
+        hist_rows = []
+        for t in sorted(result.closed_trades, key=lambda x: x.entry_date, reverse=True):
+            hist_rows.append({
+                "Entry Date": t.entry_date.strftime("%Y-%m-%d") if t.entry_date else "",
+                "Exit Date":  t.exit_date.strftime("%Y-%m-%d")  if t.exit_date  else "—",
+                "Type":       "🟢 LONG" if t.direction == 1 else "🔴 SHORT",
+                "Entry $":    f"${t.entry_price:,.2f}",
+                "Exit $":     f"${t.exit_price:,.2f}" if t.exit_price else "—",
+                "PnL %":      f"{t.pnl_pct:+.2f}%" if t.pnl_pct is not None else "—",
+                "Result":     "✅ WIN" if t.won else "❌ LOSS",
+            })
+        st.dataframe(pd.DataFrame(hist_rows), use_container_width=True, height=400)
+    else:
+        st.info("Run an analysis first to see backtest results.")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CHAT TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab3:
+    for msg in st.session_state.msgs:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("Ask about signals, stop loss, take profit, indicators…")
+    if prompt:
+        st.session_state.msgs.append({"role":"user","content":prompt})
+        ctx = ""
+        if st.session_state.df is not None:
+            last = st.session_state.df.iloc[-1]
+            sig  = int(last["signal"])
+            ctx  = f"Signal:{'LONG' if sig==1 else 'SHORT' if sig==-1 else 'NONE'}. Score:{last['score']:.2f}. RSI:{last['rsi']:.0f}. ADX:{last['adx']:.0f}."
+        if st.session_state.result:
+            r = st.session_state.result
+            ctx += f" WinRate:{r.win_rate:.1f}%. ProfitFactor:{r.profit_factor:.2f}."
+        reply = chat_reply(prompt, ctx)
+        st.session_state.msgs.append({"role":"assistant","content":reply})
+        st.rerun()
