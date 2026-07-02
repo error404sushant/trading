@@ -6,7 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from data.fetcher import fetch_ohlcv, get_live_price
-from data.trade_store import get_open_trade, open_trade, close_trade, maybe_auto_close, get_all_trades, init_db
+from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_all_trades, init_db
 from data.screener_store import (init_screener, add_ticker, remove_ticker,
                                   get_watchlist, log_alert, get_recent_alerts)
 from indicators.signals import generate_signals
@@ -181,11 +181,6 @@ with st.sidebar:
               </div>
             </div>""", unsafe_allow_html=True)
 
-            if not hit:
-                if st.button(f"Close {t['ticker']}", key=f"cl_{t['id']}",
-                             use_container_width=True):
-                    close_trade(t["id"], lp, "MANUAL")
-                    st.rerun()
 
         st.divider()
 
