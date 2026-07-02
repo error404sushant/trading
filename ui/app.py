@@ -7,11 +7,14 @@ import plotly.graph_objects as go
 
 from data.fetcher import fetch_ohlcv, get_live_price
 from data.trade_store import get_open_trade, open_trade, close_trade, maybe_auto_close, get_all_trades, init_db
+from data.screener_store import (init_screener, add_ticker, remove_ticker,
+                                  get_watchlist, log_alert, get_recent_alerts)
 from indicators.signals import generate_signals
 from backtest.engine import run_backtest
 from backtest.optimizer import optimize
 
 init_db()
+init_screener()
 
 # ── Popular tickers for autocomplete ─────────────────────────────────────────
 POPULAR = {
@@ -118,7 +121,8 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 # ── Session state ─────────────────────────────────────────────────────────────
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),
-            ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}])]:
+            ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
+            ("screener_last", {}),("screener_new_alerts",[])]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -243,7 +247,7 @@ current_key = f"{ticker}|{timeframe}"
 needs_load  = (current_key != st.session_state.loaded_key)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "📡 Screener"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIGNAL + CHART TAB
@@ -598,3 +602,227 @@ with tab3:
         reply = chat_reply(prompt, ctx)
         st.session_state.msgs.append({"role":"assistant","content":reply})
         st.rerun()
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCREENER TAB
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab4:
+    st.markdown("## 📡 Signal Screener")
+    st.caption("Add any tickers to watch. When a LONG or SHORT signal fires you'll get a browser notification + in-app alert.")
+
+    # ── Enable browser notifications (JS button inside iframe — requires user click) ──
+    st.components.v1.html("""
+    <style>
+      body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+      #notif-btn {
+        background:#2962FF; color:#fff; border:none; padding:9px 20px;
+        border-radius:8px; cursor:pointer; font-size:0.88rem; font-weight:600;
+        display:flex; align-items:center; gap:6px;
+      }
+      #notif-btn:hover { background:#1a47d6; }
+      #notif-status { margin-top:8px; font-size:0.82rem; font-weight:600; }
+      .granted  { color:#16a34a; }
+      .denied   { color:#dc2626; }
+      .default  { color:#6b7280; }
+    </style>
+    <button id="notif-btn" onclick="requestNotifPermission()">
+      🔔 Enable Browser Notifications
+    </button>
+    <div id="notif-status"></div>
+    <script>
+    function updateStatus() {
+      var el = document.getElementById('notif-status');
+      var btn = document.getElementById('notif-btn');
+      if (!("Notification" in window)) {
+        el.className = 'denied'; el.textContent = '✗ Browser does not support notifications.'; return;
+      }
+      if (Notification.permission === 'granted') {
+        el.className = 'granted'; el.textContent = '✅ Notifications are enabled — you will receive signal alerts!';
+        btn.style.display = 'none';
+      } else if (Notification.permission === 'denied') {
+        el.className = 'denied'; el.textContent = '🚫 Notifications blocked. Please allow in browser site settings.';
+        btn.style.display = 'none';
+      } else {
+        el.className = 'default'; el.textContent = 'Click the button to enable notifications.';
+      }
+    }
+    function requestNotifPermission() {
+      if (!("Notification" in window)) return;
+      Notification.requestPermission().then(function(permission) {
+        if (permission === 'granted') {
+          new Notification('Trading Signals', {
+            body: '✅ You will now receive LONG/SHORT signal alerts!',
+            tag: 'setup'
+          });
+        }
+        updateStatus();
+      });
+    }
+    updateStatus();
+    </script>
+    """, height=70)
+
+    st.markdown("---")
+
+    # ── Add ticker to watchlist ───────────────────────────────────────────────
+    st.markdown("#### ➕ Add Ticker to Watchlist")
+    col_add1, col_add2, col_add3 = st.columns([3, 2, 1])
+    with col_add1:
+        add_sym = st.text_input("Ticker", placeholder="BTC-USD, AAPL, ETH-USD…",
+                                label_visibility="collapsed", key="screener_add_sym")
+    with col_add2:
+        add_tf = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
+                              index=6, key="screener_add_tf", label_visibility="collapsed")
+    with col_add3:
+        if st.button("Add", type="primary", use_container_width=True, key="screener_add_btn"):
+            if add_sym.strip():
+                add_ticker(add_sym.strip().upper(), add_tf)
+                st.success(f"Added {add_sym.upper()} ({add_tf})")
+                st.rerun()
+
+    # Quick-add popular tickers
+    st.caption("Quick add:")
+    qcols = st.columns(8)
+    for i, sym in enumerate(["BTC-USD","ETH-USD","SOL-USD","AAPL","TSLA","NVDA","EURUSD=X","GC=F"]):
+        if qcols[i].button(sym, key=f"qadd_{sym}", use_container_width=True):
+            add_ticker(sym, "1d")
+            st.rerun()
+
+    st.markdown("---")
+
+    # ── Watchlist with live scanning ─────────────────────────────────────────
+    watchlist = get_watchlist()
+
+    if not watchlist:
+        st.markdown("""
+        <div style="text-align:center;padding:40px;color:#9ca3af;border:1px dashed #e0e4ef;border-radius:12px;">
+          <div style="font-size:2rem;">📡</div>
+          <div style="margin-top:8px;">Watchlist is empty — add tickers above to start scanning</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown(f"#### 👁️ Watching {len(watchlist)} ticker{'s' if len(watchlist)>1 else ''} — scans every 60s")
+
+        @st.fragment(run_every=60)
+        def screener_scanner():
+            wl      = get_watchlist()
+            new_alerts = []
+
+            rows = []
+            for w in wl:
+                sym = w["ticker"]
+                tf  = w["timeframe"]
+                key = f"{sym}|{tf}"
+                sig_label = "…"
+                sig_color = "#6b7280"
+                score_str = "—"
+                price_str = "—"
+                sig_val   = 0
+
+                try:
+                    df_s = generate_signals(fetch_ohlcv(sym, interval=tf))
+                    last_s   = df_s.iloc[-1]
+                    sig_val  = int(last_s["signal"])
+                    score_s  = float(last_s["score"])
+                    lp_s     = get_live_price(sym)["price"]
+                    price_s  = lp_s if lp_s > 0 else float(last_s["close"])
+                    score_str = f"{score_s:+.2f}"
+                    price_str = f"${price_s:,.4f}" if price_s < 1 else f"${price_s:,.2f}"
+
+                    if sig_val == 1:
+                        sig_label = "🟢 LONG";  sig_color = "#16a34a"
+                    elif sig_val == -1:
+                        sig_label = "🔴 SHORT"; sig_color = "#dc2626"
+                    else:
+                        sig_label = "⚪ NO SIGNAL"; sig_color = "#6b7280"
+
+                    prev_sig = st.session_state.screener_last.get(key, None)
+                    if sig_val != 0 and prev_sig != sig_val:
+                        direction = "LONG" if sig_val == 1 else "SHORT"
+                        log_alert(sym, tf, direction, score_s, price_s)
+                        new_alerts.append({
+                            "ticker": sym, "timeframe": tf,
+                            "signal": direction, "price": price_s, "score": score_s
+                        })
+                        st.session_state.screener_last[key] = sig_val
+                    elif sig_val == 0:
+                        st.session_state.screener_last[key] = 0
+
+                except Exception:
+                    sig_label = "⚠️ Error"; sig_color = "#f59e0b"
+
+                rows.append({
+                    "sym": sym, "tf": tf,
+                    "sig_label": sig_label, "sig_color": sig_color,
+                    "price_str": price_str, "score_str": score_str,
+                })
+
+            # ── Render watchlist cards ────────────────────────────────────────
+            for row in rows:
+                c1, c2, c3, c4, c5 = st.columns([2,1,2,1,1])
+                c1.markdown(f"**{row['sym']}**  \n<span style='font-size:0.72rem;color:#6b7280;'>{row['tf']}</span>",
+                            unsafe_allow_html=True)
+                c2.markdown(f"<span style='font-size:0.82rem;color:#6b7280;'>{row['price_str']}</span>",
+                            unsafe_allow_html=True)
+                c3.markdown(f"<span style='font-weight:700;color:{row['sig_color']};'>{row['sig_label']}</span>",
+                            unsafe_allow_html=True)
+                c4.markdown(f"<span style='font-size:0.82rem;color:#6b7280;'>Score {row['score_str']}</span>",
+                            unsafe_allow_html=True)
+                if c5.button("✕", key=f"rm_{row['sym']}_{row['tf']}", help=f"Remove {row['sym']}"):
+                    remove_ticker(row["sym"])
+                    st.rerun()
+
+            # ── Toast + browser notification for new alerts ───────────────────
+            for a in new_alerts:
+                icon = "📈" if a["signal"] == "LONG" else "📉"
+                st.toast(f"{icon} **{a['ticker']} {a['signal']}** @ {a['price_str'] if 'price_str' in a else ''}", icon=icon)
+
+            if new_alerts:
+                notif_js = "\n".join([
+                    f"tryNotify({repr(a['ticker'])}, {repr(a['signal'])}, {a['price']});"
+                    for a in new_alerts
+                ])
+                st.components.v1.html(f"""
+                <script>
+                function tryNotify(ticker, signal, price) {{
+                  if (!("Notification" in window.parent)) return;
+                  var doIt = function() {{
+                    if (window.parent.Notification.permission === "granted") {{
+                      var icon = signal === "LONG" ? "📈" : "📉";
+                      new window.parent.Notification(ticker + " — " + signal + " Signal", {{
+                        body: icon + " @ $" + price.toFixed(2) + " | Trading Signals",
+                        tag: ticker + signal,
+                        requireInteraction: true
+                      }});
+                    }}
+                  }};
+                  if (window.parent.Notification.permission === "default") {{
+                    window.parent.Notification.requestPermission().then(doIt);
+                  }} else {{
+                    doIt();
+                  }}
+                }}
+                {notif_js}
+                </script>
+                """, height=0)
+
+        screener_scanner()
+
+    st.markdown("---")
+
+    # ── Alert History ─────────────────────────────────────────────────────────
+    st.markdown("#### 🔔 Alert History")
+    alerts = get_recent_alerts(limit=50)
+    if alerts:
+        alert_rows = []
+        for a in alerts:
+            alert_rows.append({
+                "Time":      a["fired_at"][:16],
+                "Ticker":    a["ticker"],
+                "Timeframe": a["timeframe"],
+                "Signal":    f"🟢 {a['signal']}" if a["signal"] == "LONG" else f"🔴 {a['signal']}",
+                "Price":     f"${a['price']:,.2f}" if a["price"] else "—",
+                "Score":     f"{a['score']:+.2f}" if a["score"] else "—",
+            })
+        st.dataframe(pd.DataFrame(alert_rows), use_container_width=True, height=300)
+    else:
+        st.caption("No alerts fired yet — signals will appear here as they trigger.")
