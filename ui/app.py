@@ -8,8 +8,7 @@ from datetime import date, timedelta
 
 from data.fetcher import fetch_ohlcv, get_live_price, fetch_open_interest
 from data.trade_store import get_open_trade, open_trade, maybe_auto_close, get_all_trades, init_db
-from data.screener_store import (init_screener, add_ticker, remove_ticker,
-                                  get_watchlist, log_alert, get_recent_alerts)
+from data.screener_store import init_screener, add_ticker, remove_ticker, get_watchlist
 from data.bybit_client import (is_configured, get_balance, get_positions,
                                 place_order, close_position, get_bybit_symbol,
                                 get_min_qty, calc_qty, get_trade_history)
@@ -148,8 +147,8 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
-            ("screener_last", {}),("screener_new_alerts",[]),
-            ("bybit_auto_trade", True),("bybit_qty", 0.001),("bybit_last_order", {})]:
+            ("bybit_auto_trade", True),("bybit_last_order", {}),
+            ("track_last_signal", {})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -367,7 +366,7 @@ if (not needs_load and not auto_opt and st.session_state.df is not None):
         st.session_state.backtest_key = manual_bt_key
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "📡 Screener", "🟡 Bybit"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "🎯 Track", "🟡 Bybit"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIGNAL + CHART TAB
@@ -987,230 +986,230 @@ with tab3:
         st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SCREENER TAB
+# TRACK TAB
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab4:
-    st.markdown("## 📡 Signal Screener")
-    st.caption("Add any tickers to watch. When a LONG or SHORT signal fires you'll get a browser notification + in-app alert.")
+    st.markdown("## 🎯 Track & Auto-Trade")
+    st.caption("Add up to 10 coins. Any signal fires a Bybit order automatically — same as the main tab.")
 
-    # ── Enable browser notifications (JS button inside iframe — requires user click) ──
-    st.components.v1.html("""
-    <style>
-      body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
-      #notif-btn {
-        background:#2962FF; color:#fff; border:none; padding:9px 20px;
-        border-radius:8px; cursor:pointer; font-size:0.88rem; font-weight:600;
-        display:flex; align-items:center; gap:6px;
-      }
-      #notif-btn:hover { background:#1a47d6; }
-      #notif-status { margin-top:8px; font-size:0.82rem; font-weight:600; }
-      .granted  { color:#16a34a; }
-      .denied   { color:#dc2626; }
-      .default  { color:#6b7280; }
-    </style>
-    <button id="notif-btn" onclick="requestNotifPermission()">
-      🔔 Enable Browser Notifications
-    </button>
-    <div id="notif-status"></div>
-    <script>
-    function updateStatus() {
-      var el = document.getElementById('notif-status');
-      var btn = document.getElementById('notif-btn');
-      if (!("Notification" in window)) {
-        el.className = 'denied'; el.textContent = '✗ Browser does not support notifications.'; return;
-      }
-      if (Notification.permission === 'granted') {
-        el.className = 'granted'; el.textContent = '✅ Notifications are enabled — you will receive signal alerts!';
-        btn.style.display = 'none';
-      } else if (Notification.permission === 'denied') {
-        el.className = 'denied'; el.textContent = '🚫 Notifications blocked. Please allow in browser site settings.';
-        btn.style.display = 'none';
-      } else {
-        el.className = 'default'; el.textContent = 'Click the button to enable notifications.';
-      }
-    }
-    function requestNotifPermission() {
-      if (!("Notification" in window)) return;
-      Notification.requestPermission().then(function(permission) {
-        if (permission === 'granted') {
-          new Notification('Trading Signals', {
-            body: '✅ You will now receive LONG/SHORT signal alerts!',
-            tag: 'setup'
-          });
-        }
-        updateStatus();
-      });
-    }
-    updateStatus();
-    </script>
-    """, height=70)
+    # ── Add coins ─────────────────────────────────────────────────────────────
+    watchlist = get_watchlist()
+    can_add   = len(watchlist) < 10
 
-    st.markdown("---")
+    # Quick-add crypto buttons
+    st.markdown("#### ➕ Add Coins to Track")
+    tracked_syms = {w["ticker"] for w in watchlist}
 
-    # ── Add ticker to watchlist ───────────────────────────────────────────────
-    st.markdown("#### ➕ Add Ticker to Watchlist")
-    col_add1, col_add2, col_add3 = st.columns([3, 2, 1])
-    with col_add1:
-        add_sym = st.text_input("Ticker", placeholder="BTC-USD, AAPL, ETH-USD…",
-                                label_visibility="collapsed", key="screener_add_sym")
-    with col_add2:
-        add_tf = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
-                              index=6, key="screener_add_tf", label_visibility="collapsed")
-    with col_add3:
-        if st.button("Add", type="primary", use_container_width=True, key="screener_add_btn"):
-            if add_sym.strip():
-                add_ticker(add_sym.strip().upper(), add_tf)
-                st.success(f"Added {add_sym.upper()} ({add_tf})")
-                st.rerun()
-
-    # Quick-add popular tickers
-    st.caption("Quick add:")
-    qcols = st.columns(8)
-    for i, sym in enumerate(["BTC-USD","ETH-USD","SOL-USD","AAPL","TSLA","NVDA","EURUSD=X","GC=F"]):
-        if qcols[i].button(sym, key=f"qadd_{sym}", use_container_width=True):
-            add_ticker(sym, "1d")
+    crypto_coins = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD",
+                    "ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"]
+    cols_add = st.columns(5)
+    for i, sym in enumerate(crypto_coins):
+        already = sym in tracked_syms
+        label   = f"✓ {sym}" if already else sym
+        btn_type = "primary" if already else "secondary"
+        if cols_add[i % 5].button(label, key=f"track_add_{sym}",
+                                   use_container_width=True, type=btn_type):
+            if already:
+                remove_ticker(sym)
+            else:
+                if can_add:
+                    add_ticker(sym, "1d")
             st.rerun()
 
+    # Custom ticker input
+    st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+    ca1, ca2, ca3 = st.columns([3, 2, 1])
+    with ca1:
+        custom_sym = st.text_input("Custom ticker", placeholder="e.g. LINK-USD, NEAR-USD",
+                                   label_visibility="collapsed", key="track_custom_sym")
+    with ca2:
+        custom_tf = st.selectbox("Timeframe", ["15m","30m","1h","4h","1d"],
+                                 index=4, key="track_custom_tf", label_visibility="collapsed")
+    with ca3:
+        if st.button("Add", type="primary", use_container_width=True, key="track_custom_btn"):
+            if custom_sym.strip() and can_add:
+                add_ticker(custom_sym.strip().upper(), custom_tf)
+                st.rerun()
+            elif not can_add:
+                st.warning("Max 10 coins — remove one first")
+
+    watchlist = get_watchlist()
+    st.markdown(f"""
+    <div style="font-size:0.78rem;color:#6b7280;margin:8px 0 4px;">
+      Tracking <b>{len(watchlist)}/10</b> coins &nbsp;·&nbsp;
+      Scans every 60s &nbsp;·&nbsp;
+      {'<span style="color:#16a34a;font-weight:700;">⚡ Auto-trade ON</span>' if is_configured() else '<span style="color:#f59e0b;">⚠️ Bybit not configured</span>'}
+    </div>""", unsafe_allow_html=True)
+
     st.markdown("---")
 
-    # ── Watchlist with live scanning ─────────────────────────────────────────
-    watchlist = get_watchlist()
-
+    # ── Live tracking grid ────────────────────────────────────────────────────
     if not watchlist:
         st.markdown("""
-        <div style="text-align:center;padding:40px;color:#9ca3af;border:1px dashed #e0e4ef;border-radius:12px;">
-          <div style="font-size:2rem;">📡</div>
-          <div style="margin-top:8px;">Watchlist is empty — add tickers above to start scanning</div>
+        <div style="text-align:center;padding:50px;background:#f8f9fc;
+             border:1px dashed #e0e4ef;border-radius:12px;color:#6b7280;">
+          <div style="font-size:2.5rem;">🎯</div>
+          <div style="font-size:1rem;font-weight:600;margin-top:10px;">No coins tracked yet</div>
+          <div style="font-size:0.85rem;margin-top:6px;">Click coins above to add them to tracking</div>
         </div>""", unsafe_allow_html=True)
     else:
-        st.markdown(f"#### 👁️ Watching {len(watchlist)} ticker{'s' if len(watchlist)>1 else ''} — scans every 60s")
-
         @st.fragment(run_every=60)
-        def screener_scanner():
-            wl      = get_watchlist()
-            new_alerts = []
-
-            rows = []
+        def track_scanner():
+            wl = get_watchlist()
             for w in wl:
                 sym = w["ticker"]
                 tf  = w["timeframe"]
                 key = f"{sym}|{tf}"
-                sig_label = "…"
-                sig_color = "#6b7280"
-                score_str = "—"
-                price_str = "—"
-                sig_val   = 0
 
+                sig_val, score_s, price_s, direction = 0, 0.0, 0.0, ""
+                err = None
                 try:
-                    oi_s = fetch_open_interest(sym, interval=tf)
-                    df_s = generate_signals(fetch_ohlcv(sym, interval=tf),
-                                            oi_series=oi_s if not oi_s.empty else None)
-                    last_s   = df_s.iloc[-1]
-                    sig_val  = int(last_s["signal"])
-                    score_s  = float(last_s["score"])
-                    lp_s     = get_live_price(sym)["price"]
-                    price_s  = lp_s if lp_s > 0 else float(last_s["close"])
-                    score_str = f"{score_s:+.2f}"
-                    price_str = f"${price_s:,.4f}" if price_s < 1 else f"${price_s:,.2f}"
+                    oi_s   = fetch_open_interest(sym, interval=tf)
+                    df_s   = generate_signals(fetch_ohlcv(sym, interval=tf),
+                                              oi_series=oi_s if not oi_s.empty else None)
+                    last_s = df_s.iloc[-1]
+                    sig_val   = int(last_s["signal"])
+                    score_s   = float(last_s["score"])
+                    lp_s      = get_live_price(sym)["price"]
+                    price_s   = lp_s if lp_s > 0 else float(last_s["close"])
+                    used_sl_t = st.session_state.opt_sl
+                    used_tp_t = st.session_state.opt_tp
+                except Exception as e:
+                    err = str(e)
 
-                    if sig_val == 1:
-                        sig_label = "🟢 LONG";  sig_color = "#16a34a"
-                    elif sig_val == -1:
-                        sig_label = "🔴 SHORT"; sig_color = "#dc2626"
+                # ── Auto-trade on signal ──────────────────────────────────────
+                bybit_status = ""
+                if not err and sig_val != 0 and price_s > 0 and is_configured() and get_bybit_symbol(sym):
+                    direction = "LONG" if sig_val == 1 else "SHORT"
+                    if direction == "LONG":
+                        sl_p = price_s * (1 - used_sl_t / 100)
+                        tp_p = price_s * (1 + used_tp_t / 100)
                     else:
-                        sig_label = "⚪ NO SIGNAL"; sig_color = "#6b7280"
+                        sl_p = price_s * (1 + used_sl_t / 100)
+                        tp_p = price_s * (1 - used_tp_t / 100)
 
-                    prev_sig = st.session_state.screener_last.get(key, None)
-                    if sig_val != 0 and prev_sig != sig_val:
-                        direction = "LONG" if sig_val == 1 else "SHORT"
-                        log_alert(sym, tf, direction, score_s, price_s)
-                        new_alerts.append({
-                            "ticker": sym, "timeframe": tf,
-                            "signal": direction, "price": price_s, "score": score_s
-                        })
-                        st.session_state.screener_last[key] = sig_val
-                    elif sig_val == 0:
-                        st.session_state.screener_last[key] = 0
+                    _, is_new = open_trade(sym, tf, direction, price_s,
+                                           sl_p, tp_p, used_sl_t, used_tp_t, score_s)
+                    order_key = f"{sym}|{direction}|{price_s:.4f}"
+                    prev_key  = st.session_state.track_last_signal.get(key)
 
-                except Exception:
-                    sig_label = "⚠️ Error"; sig_color = "#f59e0b"
+                    if is_new and prev_key != order_key:
+                        qty = calc_qty(sym, price_s, balance_pct=0.10, leverage=2)
+                        if qty > 0:
+                            res = place_order(sym, direction, qty, sl_p, tp_p, leverage=2)
+                            st.session_state.track_last_signal[key] = order_key
+                            if res["ok"]:
+                                bybit_status = "order_placed"
+                                st.toast(f"{'✅' if direction=='LONG' else '🔴'} Bybit {direction} — {sym} qty {qty:.4f}", icon="🟢" if direction=="LONG" else "🔴")
+                            else:
+                                bybit_status = f"error: {res['error']}"
+                        else:
+                            bybit_status = "qty_zero"
+                    else:
+                        bybit_status = "already_tracked"
+
+                # ── Render card ───────────────────────────────────────────────
+                if err:
+                    sig_label, sig_color, bg, bc = "⚠️ Error", "#f59e0b", "#fffbf0", "#f59e0b"
+                elif sig_val == 1:
+                    sig_label, sig_color, bg, bc = "🟢 LONG",  "#16a34a", "#f0fff4", "#22c55e"
+                elif sig_val == -1:
+                    sig_label, sig_color, bg, bc = "🔴 SHORT", "#dc2626", "#fff5f5", "#ef4444"
+                else:
+                    sig_label, sig_color, bg, bc = "⚪ No Signal", "#6b7280", "#f8f9fc", "#e0e4ef"
+
+                price_fmt = f"${price_s:,.4f}" if 0 < price_s < 1 else (f"${price_s:,.2f}" if price_s >= 1 else "—")
+
+                # Check if open DB trade exists
+                db_t = get_open_trade(sym, tf)
+                trade_badge = ""
+                if db_t:
+                    d_dir = db_t["direction"]
+                    d_col = "#16a34a" if d_dir == "LONG" else "#dc2626"
+                    lp_now = get_live_price(sym)["price"]
+                    if lp_now > 0:
+                        mult = 1 if d_dir == "LONG" else -1
+                        pnl_pct = (lp_now - db_t["entry_price"]) / db_t["entry_price"] * 100 * mult
+                        pnl_col = "#16a34a" if pnl_pct >= 0 else "#dc2626"
+                        trade_badge = f'<span style="font-size:0.7rem;background:{d_col}22;color:{d_col};border-radius:4px;padding:2px 6px;font-weight:700;">⏳ {d_dir} {pnl_pct:+.2f}%</span>'
+
+                bybit_badge = ""
+                if bybit_status == "order_placed":
+                    bybit_badge = '<span style="font-size:0.68rem;background:#f0fff4;color:#16a34a;border-radius:4px;padding:2px 6px;font-weight:700;">✅ Bybit order placed</span>'
+                elif bybit_status == "already_tracked":
+                    bybit_badge = '<span style="font-size:0.68rem;color:#6b7280;">already in position</span>'
+                elif bybit_status.startswith("error"):
+                    bybit_badge = f'<span style="font-size:0.68rem;color:#dc2626;">{bybit_status}</span>'
+
+                col_card, col_rm = st.columns([11, 1])
+                with col_card:
+                    st.markdown(f"""
+                    <div style="background:{bg};border-left:4px solid {bc};border-radius:10px;
+                         padding:12px 16px;margin-bottom:8px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                          <span style="font-size:1rem;font-weight:900;color:#111827;">{sym}</span>
+                          <span style="font-size:0.7rem;color:#6b7280;margin-left:6px;">{tf}</span>
+                          &nbsp;&nbsp;{trade_badge}
+                        </div>
+                        <div style="text-align:right;">
+                          <span style="font-size:1.1rem;font-weight:900;color:{sig_color};">{sig_label}</span>
+                        </div>
+                      </div>
+                      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.78rem;color:#374151;">
+                        <span>Price &nbsp;<b>{price_fmt}</b></span>
+                        <span>Score &nbsp;<b style="color:{sig_color};">{score_s:+.2f}</b></span>
+                        <span>{bybit_badge}</span>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+                with col_rm:
+                    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+                    if st.button("✕", key=f"trm_{sym}_{tf}", help=f"Remove {sym}"):
+                        remove_ticker(sym)
+                        st.rerun()
+
+        track_scanner()
+
+        st.markdown("---")
+
+        # ── Trades taken from tracker ─────────────────────────────────────────
+        st.markdown("### 📋 Trades Taken")
+        tracked_syms_list = [w["ticker"] for w in watchlist]
+        all_track_trades = []
+        for sym in tracked_syms_list:
+            trades = get_all_trades(sym, "1d", limit=20)
+            all_track_trades.extend(trades)
+
+        all_track_trades.sort(key=lambda x: x["entry_date"], reverse=True)
+
+        if all_track_trades:
+            rows = []
+            for t in all_track_trades[:50]:
+                is_open   = t["status"] == "OPEN"
+                direction = 1 if t["direction"] == "LONG" else -1
+                lp = get_live_price(t["ticker"])["price"] if is_open else 0
+                if is_open and lp > 0:
+                    pnl_str = f"{(lp - t['entry_price']) / t['entry_price'] * 100 * direction:+.2f}% (live)"
+                    result_str = "⏳ OPEN"
+                elif t["pnl_pct"] is not None:
+                    pnl_str = f"{t['pnl_pct']:+.2f}%"
+                    result_str = {"TP_HIT": "🎯 TP", "SL_HIT": "🛑 SL", "MANUAL": "✋"}.get(t["status"], "✅" if t["pnl_pct"] > 0 else "❌")
+                else:
+                    pnl_str, result_str = "—", "—"
 
                 rows.append({
-                    "sym": sym, "tf": tf,
-                    "sig_label": sig_label, "sig_color": sig_color,
-                    "price_str": price_str, "score_str": score_str,
+                    "Result":  result_str,
+                    "Coin":    t["ticker"],
+                    "Type":    f"🟢 {t['direction']}" if t["direction"] == "LONG" else f"🔴 {t['direction']}",
+                    "Entry":   t["entry_date"][:16],
+                    "Entry $": f"${t['entry_price']:,.4f}" if t['entry_price'] < 1 else f"${t['entry_price']:,.2f}",
+                    "PnL %":   pnl_str,
+                    "SL $":    f"${t['sl_price']:,.4f}" if t['sl_price'] < 1 else f"${t['sl_price']:,.2f}",
+                    "TP $":    f"${t['tp_price']:,.4f}" if t['tp_price'] < 1 else f"${t['tp_price']:,.2f}",
                 })
-
-            # ── Render watchlist cards ────────────────────────────────────────
-            for row in rows:
-                c1, c2, c3, c4, c5 = st.columns([2,1,2,1,1])
-                c1.markdown(f"**{row['sym']}**  \n<span style='font-size:0.72rem;color:#6b7280;'>{row['tf']}</span>",
-                            unsafe_allow_html=True)
-                c2.markdown(f"<span style='font-size:0.82rem;color:#6b7280;'>{row['price_str']}</span>",
-                            unsafe_allow_html=True)
-                c3.markdown(f"<span style='font-weight:700;color:{row['sig_color']};'>{row['sig_label']}</span>",
-                            unsafe_allow_html=True)
-                c4.markdown(f"<span style='font-size:0.82rem;color:#6b7280;'>Score {row['score_str']}</span>",
-                            unsafe_allow_html=True)
-                if c5.button("✕", key=f"rm_{row['sym']}_{row['tf']}", help=f"Remove {row['sym']}"):
-                    remove_ticker(row["sym"])
-                    st.rerun()
-
-            # ── Toast + browser notification for new alerts ───────────────────
-            for a in new_alerts:
-                icon = "📈" if a["signal"] == "LONG" else "📉"
-                st.toast(f"{icon} **{a['ticker']} {a['signal']}** @ {a['price_str'] if 'price_str' in a else ''}", icon=icon)
-
-            if new_alerts:
-                notif_js = "\n".join([
-                    f"tryNotify({repr(a['ticker'])}, {repr(a['signal'])}, {a['price']});"
-                    for a in new_alerts
-                ])
-                st.components.v1.html(f"""
-                <script>
-                function tryNotify(ticker, signal, price) {{
-                  if (!("Notification" in window.parent)) return;
-                  var doIt = function() {{
-                    if (window.parent.Notification.permission === "granted") {{
-                      var icon = signal === "LONG" ? "📈" : "📉";
-                      new window.parent.Notification(ticker + " — " + signal + " Signal", {{
-                        body: icon + " @ $" + price.toFixed(2) + " | Trading Signals",
-                        tag: ticker + signal,
-                        requireInteraction: true
-                      }});
-                    }}
-                  }};
-                  if (window.parent.Notification.permission === "default") {{
-                    window.parent.Notification.requestPermission().then(doIt);
-                  }} else {{
-                    doIt();
-                  }}
-                }}
-                {notif_js}
-                </script>
-                """, height=0)
-
-        screener_scanner()
-
-    st.markdown("---")
-
-    # ── Alert History ─────────────────────────────────────────────────────────
-    st.markdown("#### 🔔 Alert History")
-    alerts = get_recent_alerts(limit=50)
-    if alerts:
-        alert_rows = []
-        for a in alerts:
-            alert_rows.append({
-                "Time":      a["fired_at"][:16],
-                "Ticker":    a["ticker"],
-                "Timeframe": a["timeframe"],
-                "Signal":    f"🟢 {a['signal']}" if a["signal"] == "LONG" else f"🔴 {a['signal']}",
-                "Price":     f"${a['price']:,.2f}" if a["price"] else "—",
-                "Score":     f"{a['score']:+.2f}" if a["score"] else "—",
-            })
-        st.dataframe(pd.DataFrame(alert_rows), use_container_width=True, height=300)
-    else:
-        st.caption("No alerts fired yet — signals will appear here as they trigger.")
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, height=300)
+        else:
+            st.caption("No trades yet — they appear here as signals fire for tracked coins.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BYBIT TAB
