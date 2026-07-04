@@ -92,13 +92,21 @@ def run_backtest(
     """
     result = BacktestResult()
     capital = initial_capital
-    equity_curve = []
+    
+    # Pre-extract numpy arrays for 1000x faster access
+    prices = df["close"].to_numpy()
+    signals = df["signal"].to_numpy() if "signal" in df.columns else np.zeros(len(df))
+    timestamps = df.index
+    
+    n_rows = len(df)
+    equity_curve = np.empty(n_rows, dtype=float)
     in_trade = False
     current_trade: Trade = None
 
-    for i, (ts, row) in enumerate(df.iterrows()):
-        price = row["close"]
-        sig   = row.get("signal", 0)
+    for i in range(n_rows):
+        price = prices[i]
+        sig   = signals[i]
+        ts    = timestamps[i]
 
         if in_trade and current_trade is not None:
             direction = current_trade.direction
@@ -120,10 +128,10 @@ def run_backtest(
                 current_trade = None
 
         if not in_trade and sig in (1, -1):
-            current_trade = Trade(entry_date=ts, entry_price=price, direction=sig)
+            current_trade = Trade(entry_date=ts, entry_price=price, direction=int(sig))
             in_trade = True
 
-        equity_curve.append(capital)
+        equity_curve[i] = capital
 
     # Save any open trade at end of data
     if in_trade and current_trade is not None:

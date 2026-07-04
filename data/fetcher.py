@@ -5,6 +5,8 @@ import requests
 
 def get_live_price(ticker: str) -> dict:
     """Fetch current live price — fast, no historical data."""
+    if ticker.endswith("-USDT"):
+        ticker = ticker.replace("-USDT", "-USD")
     try:
         tk = yf.Ticker(ticker)
         info = tk.fast_info
@@ -30,6 +32,8 @@ def get_live_price(ticker: str) -> dict:
 
 def fetch_ohlcv(ticker: str, interval: str = "1d", period: str = "2y") -> pd.DataFrame:
     """Fetch OHLCV data for any ticker via Yahoo Finance."""
+    if ticker.endswith("-USDT"):
+        ticker = ticker.replace("-USDT", "-USD")
     interval_map = {
         "1m": ("7d", "1m"),
         "5m": ("60d", "5m"),
@@ -82,6 +86,8 @@ def fetch_open_interest(ticker: str, interval: str = "1d", limit: int = 500) -> 
     Returns a Series indexed by datetime. Returns empty Series for non-crypto.
     OI = total number of outstanding futures contracts (measures market conviction).
     """
+    if ticker.endswith("-USDT"):
+        ticker = ticker.replace("-USDT", "-USD")
     sym = _BINANCE_MAP.get(ticker)
     if not sym:
         return pd.Series(dtype=float)

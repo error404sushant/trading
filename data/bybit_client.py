@@ -57,6 +57,8 @@ def is_configured() -> bool:
 
 
 def get_bybit_symbol(yf_ticker: str) -> str | None:
+    if yf_ticker.endswith("-USDT"):
+        yf_ticker = yf_ticker.replace("-USDT", "-USD")
     return SYMBOL_MAP.get(yf_ticker)
 
 

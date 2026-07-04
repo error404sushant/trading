@@ -21,7 +21,7 @@ init_screener()
 
 # ── Popular tickers for autocomplete ─────────────────────────────────────────
 POPULAR = {
-    "Crypto":      ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD","ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"],
+    "Crypto":      ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT","ADA-USDT","DOGE-USDT","AVAX-USDT","MATIC-USDT","DOT-USDT"],
     "Metals":      ["GC=F","SI=F","PL=F","PA=F","HG=F"],
     "Energy":      ["CL=F","BZ=F","NG=F","RB=F"],
     "US Stocks":   ["AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","META","NFLX","AMD","INTC","JPM","BAC","V","MA","WMT"],
@@ -145,7 +145,7 @@ section[data-testid="stSidebar"] > div { padding-top:1rem; }
 
 # ── Session state ─────────────────────────────────────────────────────────────
 for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
-            ("ticker","BTC-USD"),("tf","1d"),("loaded_key",""),("backtest_key",""),
+            ("ticker","BTC-USDT"),("tf","1d"),("loaded_key",""),("backtest_key",""),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
             ("bybit_auto_trade", True),("bybit_last_order", {}),
             ("track_last_signal", {})]:
@@ -210,7 +210,7 @@ with st.sidebar:
 
         st.divider()
 
-    sidebar_active_trades()
+    # sidebar_active_trades()
 
     # ══ Symbol search & picker ════════════════════════════════════════════════
     st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
@@ -500,18 +500,18 @@ with tab1:
 
         with col_price:
             @st.fragment(run_every=15)
-            def live_price_box():
-                live = get_live_price(ticker)
+            def live_price_box(current_ticker):
+                live = get_live_price(current_ticker)
                 p    = live["price"]
                 chg  = live["change_pct"]
                 chg_color = "#16a34a" if chg >= 0 else "#dc2626"
                 st.markdown(f"""<div class="price-box">
-                  <div style="font-size:0.72rem;color:#6b7280;"><span class="live-dot"></span> &nbsp;LIVE &nbsp;·&nbsp; {ticker}</div>
+                  <div style="font-size:0.72rem;color:#6b7280;"><span class="live-dot"></span> &nbsp;LIVE &nbsp;·&nbsp; {current_ticker}</div>
                   <div style="font-size:2rem;font-weight:900;color:#111827;margin-top:6px;">${p:,.2f}</div>
                   <div style="color:{chg_color};font-size:0.9rem;margin-top:4px;">{'+' if chg>=0 else ''}{chg:.2f}% today</div>
                   <div style="font-size:0.65rem;color:#9ca3af;margin-top:4px;">Updates every 15s</div>
                 </div>""", unsafe_allow_html=True)
-            live_price_box()
+            live_price_box(ticker)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -639,41 +639,7 @@ with tab1:
 
         st.markdown("---")
 
-        # ── TradingView — ONLY chart, full size ───────────────────────────────
-        tv_sym = get_tv_symbol(ticker)
-        tv_iv_map = {"1m":"1","5m":"5","15m":"15","30m":"30","1h":"60","4h":"240","1d":"D","1w":"W"}
-        tv_iv = tv_iv_map.get(timeframe, "D")
-
-        st.components.v1.html(f"""
-        <div style="border-radius:12px;overflow:hidden;border:1px solid #e0e4ef;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
-          <div id="tv_main"></div>
-        </div>
-        <script src="https://s3.tradingview.com/tv.js"></script>
-        <script>
-        new TradingView.widget({{
-          "width":  "100%",
-          "height": 580,
-          "symbol": "{tv_sym}",
-          "interval": "{tv_iv}",
-          "timezone": "Etc/UTC",
-          "theme": "light",
-          "style": "1",
-          "locale": "en",
-          "toolbar_bg": "#ffffff",
-          "allow_symbol_change": true,
-          "withdateranges": true,
-          "hide_side_toolbar": false,
-          "studies": ["RSI@tv-basicstudies","MACD@tv-basicstudies","BB@tv-basicstudies"],
-          "container_id": "tv_main",
-          "save_image": false,
-          "show_popup_button": false,
-          "popup_width": "1000",
-          "popup_height": "650"
-        }});
-        </script>
-        """, height=600)
-
-        st.caption("💡 Click the symbol name in TradingView to search any ticker. Update the sidebar symbol to get signals.")
+        # ── TradingView Chart (Removed per user request) ──────────────────────
 
     else:
         st.markdown("""
