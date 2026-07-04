@@ -7,6 +7,22 @@ def get_live_price(ticker: str) -> dict:
     """Fetch current live price — fast, no historical data."""
     if ticker.endswith("-USDT"):
         ticker = ticker.replace("-USDT", "-USD")
+
+    # If it is a crypto symbol, fetch from Binance Spot API for accurate and fast price info
+    if ticker in _BINANCE_MAP:
+        try:
+            binance_symbol = _BINANCE_MAP[ticker]
+            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={binance_symbol}"
+            r = requests.get(url, timeout=3)
+            data = r.json()
+            if "lastPrice" in data:
+                price = float(data["lastPrice"])
+                chg_pct = float(data["priceChangePercent"])
+                prev = float(data.get("prevClosePrice", price / (1 + chg_pct / 100)))
+                return {"price": price, "change_pct": chg_pct, "prev_close": prev}
+        except Exception:
+            pass  # Fallback to Yahoo Finance below
+
     try:
         tk = yf.Ticker(ticker)
         info = tk.fast_info
