@@ -142,11 +142,20 @@ window.addEventListener('load', function() {
 
 st.markdown("""
 <style>
-/* Make header transparent but visible so the open sidebar button isn't hidden */
-[data-testid="stHeader"] { background-color: transparent !important; box-shadow: none !important; }
-/* Hide only the top right toolbar (Deploy, Options) */
+/* Make header transparent and force the open sidebar button to always appear on top */
+[data-testid="stHeader"] { background-color: transparent !important; pointer-events: none !important; }
 [data-testid="stToolbar"] { display: none !important; }
-[data-testid="stAppViewContainer"] > section > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    z-index: 999999 !important;
+    pointer-events: auto !important;
+    background-color: #e0e5ec !important;
+    border-radius: 50% !important;
+    box-shadow: 4px 4px 8px rgba(163,177,198,0.6), -4px -4px 8px rgba(255,255,255, 0.5) !important;
+    margin-top: 5px !important;
+    margin-left: 5px !important;
+}
 .main .block-container { padding-top: 0.2rem !important; padding-bottom: 0rem !important; margin-top: 0rem !important; }
 [data-testid="stTabs"] { margin-top: 0rem !important; padding-top: 0rem !important; }
 
