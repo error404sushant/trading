@@ -142,34 +142,16 @@ window.addEventListener('load', function() {
 
 st.markdown("""
 <style>
-/* Make header transparent so it doesn't block the screen */
+/* Seamless Neumorphic Header to keep sidebar toggle native and visible */
 [data-testid="stHeader"] { 
-    background-color: transparent !important; 
-    box-shadow: none !important;
-    z-index: 999990 !important;
+    background-color: #e0e5ec !important; 
 }
-
-/* BULLETPROOF SIDEBAR EXPAND BUTTON for modern Streamlit (v1.30+) */
-[data-testid="stSidebarCollapsedControl"] {
-    display: flex !important;
-    visibility: visible !important;
-    position: fixed !important;
-    top: 10px !important;
-    left: 10px !important;
-    z-index: 999999 !important;
-    background-color: #e0e5ec !important;
-    border-radius: 50% !important;
-    box-shadow: 4px 4px 8px rgba(163,177,198,0.6), -4px -4px 8px rgba(255,255,255, 0.5) !important;
-    padding: 5px !important;
-}
-[data-testid="stSidebarCollapsedControl"] svg {
-    fill: #2d3748 !important;
-    stroke: #2d3748 !important;
-    color: #2d3748 !important;
-}
+/* Hide the top right toolbar (Deploy, Options) */
 [data-testid="stToolbar"] { display: none !important; }
-[data-testid="stAppViewContainer"] > section > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
-[data-testid="stTabs"] { margin-top: 0rem !important; padding-top: 0rem !important; }
+
+/* Keep enough padding so the content doesn't overlap the header and hide the toggle button */
+[data-testid="stAppViewContainer"] > section > div { padding-top: 3rem !important; padding-bottom: 0rem !important; }
+[data-testid="stTabs"] { margin-top: -1rem !important; padding-top: 0rem !important; }
 
 /* 🔵 NEUMORPHISM GLOBAL BACKGROUND 🔵 */
 [data-testid="stAppViewContainer"], [data-testid="stSidebar"] { 
