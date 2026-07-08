@@ -25,9 +25,45 @@ POPULAR = {
     "Metals":      ["GC=F","SI=F","PL=F","PA=F","HG=F"],
     "Energy":      ["CL=F","BZ=F","NG=F","RB=F"],
     "US Stocks":   ["AAPL","MSFT","GOOGL","AMZN","NVDA","TSLA","META","NFLX","AMD","INTC","JPM","BAC","V","MA","WMT"],
+    "Indian Stocks":["RELIANCE.NS","TCS.NS","HDFCBANK.NS","INFY.NS","ICICIBANK.NS","TATAMOTORS.NS","SBIN.NS","BHARTIARTL.NS"],
     "Indices":     ["^GSPC","^DJI","^IXIC","^NSEI","^BSESN","^FTSE","^N225","^HSI"],
     "Forex":       ["EURUSD=X","GBPUSD=X","USDJPY=X","AUDUSD=X","USDCAD=X","USDINR=X"],
     "Commodities": ["ZW=F","ZC=F","ZS=F","KC=F","CT=F"],
+}
+DISPLAY_NAMES = {
+    "BTC-USDT": "BTCUSDT",
+    "ETH-USDT": "ETHUSDT",
+    "SOL-USDT": "SOLUSDT",
+    "BNB-USDT": "BNBUSDT",
+    "XRP-USDT": "XRPUSDT",
+    "ADA-USDT": "ADAUSDT",
+    "DOGE-USDT": "DOGEUSDT",
+    "AVAX-USDT": "AVAXUSDT",
+    "MATIC-USDT": "MATICUSDT",
+    "DOT-USDT": "DOTUSDT",
+    "GC=F": "XAUUSDT (Gold)",
+    "SI=F": "XAGUSDT (Silver)",
+    "PL=F": "Platinum",
+    "PA=F": "Palladium",
+    "HG=F": "Copper",
+    "CL=F": "Crude Oil",
+    "BZ=F": "Brent Crude",
+    "NG=F": "Natural Gas",
+    "RB=F": "Gasoline",
+    "EURUSD=X": "EURUSD",
+    "GBPUSD=X": "GBPUSD",
+    "USDJPY=X": "USDJPY",
+    "AUDUSD=X": "AUDUSD",
+    "USDCAD=X": "USDCAD",
+    "USDINR=X": "USDINR",
+    "RELIANCE.NS": "Reliance (NSE)",
+    "TCS.NS": "TCS (NSE)",
+    "HDFCBANK.NS": "HDFC Bank",
+    "INFY.NS": "Infosys",
+    "ICICIBANK.NS": "ICICI Bank",
+    "TATAMOTORS.NS": "Tata Motors",
+    "SBIN.NS": "State Bank of India",
+    "BHARTIARTL.NS": "Bharti Airtel",
 }
 ALL_TICKERS = [t for group in POPULAR.values() for t in group]
 
@@ -36,6 +72,10 @@ TV_SYMBOL_MAP = {
     "BNB-USD":"BINANCE:BNBUSDT","XRP-USD":"BINANCE:XRPUSDT","ADA-USD":"BINANCE:ADAUSDT",
     "DOGE-USD":"BINANCE:DOGEUSDT","AVAX-USD":"BINANCE:AVAXUSDT","MATIC-USD":"BINANCE:MATICUSDT",
     "DOT-USD":"BINANCE:DOTUSDT",
+    "BTC-USDT":"BINANCE:BTCUSDT","ETH-USDT":"BINANCE:ETHUSDT","SOL-USDT":"BINANCE:SOLUSDT",
+    "BNB-USDT":"BINANCE:BNBUSDT","XRP-USDT":"BINANCE:XRPUSDT","ADA-USDT":"BINANCE:ADAUSDT",
+    "DOGE-USDT":"BINANCE:DOGEUSDT","AVAX-USDT":"BINANCE:AVAXUSDT","MATIC-USDT":"BINANCE:MATICUSDT",
+    "DOT-USDT":"BINANCE:DOTUSDT",
     "AAPL":"NASDAQ:AAPL","MSFT":"NASDAQ:MSFT","GOOGL":"NASDAQ:GOOGL","AMZN":"NASDAQ:AMZN",
     "NVDA":"NASDAQ:NVDA","TSLA":"NASDAQ:TSLA","META":"NASDAQ:META","NFLX":"NASDAQ:NFLX",
     "AMD":"NASDAQ:AMD","INTC":"NASDAQ:INTC","JPM":"NYSE:JPM","BAC":"NYSE:BAC",
@@ -51,6 +91,10 @@ TV_SYMBOL_MAP = {
 }
 
 def get_tv_symbol(ticker: str) -> str:
+    if ticker.endswith(".NS"):
+        return "NSE:" + ticker.replace(".NS", "")
+    if ticker.endswith(".BO"):
+        return "BSE:" + ticker.replace(".BO", "")
     return TV_SYMBOL_MAP.get(ticker, ticker.replace("-USD","USDT").replace("=X","").replace("^","").replace("-",""))
 
 def chat_reply(q: str, ctx: str) -> str:
@@ -98,6 +142,12 @@ window.addEventListener('load', function() {
 
 st.markdown("""
 <style>
+/* Hide Streamlit header (options menu / 3 dots) and minimize top padding */
+[data-testid="stHeader"] { display: none !important; }
+[data-testid="stAppViewContainer"] > section > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
+.main .block-container { padding-top: 0.2rem !important; padding-bottom: 0rem !important; margin-top: 0rem !important; }
+[data-testid="stTabs"] { margin-top: 0rem !important; padding-top: 0rem !important; }
+
 /* Light theme overrides */
 [data-testid="stAppViewContainer"] { background:#ffffff; }
 [data-testid="stSidebar"] { background:#f8f9fc; border-right:1px solid #e0e4ef; }
@@ -106,18 +156,17 @@ st.markdown("""
 [data-stale="true"] { opacity: 1 !important; transition: none !important; }
 [data-testid="stStatusWidget"] { display: none !important; }
 [data-testid="stSpinner"] { display: none !important; }
-[data-testid="stHeader"] { background:#ffffff; border-bottom:1px solid #e0e4ef; }
 section[data-testid="stSidebar"] > div { padding-top:1rem; }
 
 /* Signal boxes */
-.sig-long  { background:#f0fff4; border:2px solid #22c55e; border-radius:12px; padding:24px; text-align:center; }
-.sig-short { background:#fff5f5; border:2px solid #ef4444; border-radius:12px; padding:24px; text-align:center; }
-.sig-none  { background:#fffbf0; border:2px solid #f59e0b; border-radius:12px; padding:24px; text-align:center; }
-.sig-type  { font-size:2rem; font-weight:900; letter-spacing:3px; }
-.sig-sub   { font-size:0.82rem; color:#6b7280; margin-top:6px; }
+.sig-long  { background:#f0fff4; border:2px solid #22c55e; border-radius:8px; padding:10px; text-align:center; }
+.sig-short { background:#fff5f5; border:2px solid #ef4444; border-radius:8px; padding:10px; text-align:center; }
+.sig-none  { background:#fffbf0; border:2px solid #f59e0b; border-radius:8px; padding:10px; text-align:center; }
+.sig-type  { font-size:1.2rem; font-weight:900; letter-spacing:1px; }
+.sig-sub   { font-size:0.72rem; color:#6b7280; margin-top:2px; }
 
 /* Price box */
-.price-box { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:12px; padding:20px; text-align:center; }
+.price-box { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:8px; padding:10px; text-align:center; }
 .live-dot  { display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:50%;animation:blink 1.2s infinite; }
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
@@ -148,109 +197,48 @@ for k,v in [("df",None),("result",None),("opt_sl",2.0),("opt_tp",4.0),
             ("ticker","BTC-USDT"),("tf","1d"),("loaded_key",""),("backtest_key",""),
             ("msgs",[{"role":"assistant","content":"Select any coin — signals load automatically."}]),
             ("bybit_auto_trade", True),("bybit_last_order", {}),
-            ("track_last_signal", {})]:
+            ("track_last_signal", {}),
+            ("us_search_input", "BTC-USDT"), ("ind_search_input", ""),
+            ("active_tab", "Signal & Chart")]:
     if k not in st.session_state:
         st.session_state[k] = v
+
+
+def set_active_ticker(t):
+    st.session_state.ticker = t
+    if t.endswith((".NS", ".BO")):
+        st.session_state["us_search_input"] = ""
+        st.session_state["ind_search_input"] = t.replace(".NS", "").replace(".BO", "")
+    else:
+        st.session_state["us_search_input"] = t
+        st.session_state["ind_search_input"] = ""
+
+
+def load_tracked_coin(sym, tf):
+    set_active_ticker(sym)
+    st.session_state.tf = tf
+    st.session_state.active_tab = "Signal & Chart"
+
+
+def on_us_search():
+    val = st.session_state.us_search_input.upper().strip()
+    if val:
+        st.session_state.ticker = val
+        st.session_state.ind_search_input = ""
+
+
+def on_ind_search():
+    val = st.session_state.ind_search_input.upper().strip()
+    if val:
+        if not val.endswith((".NS", ".BO")):
+            val = val + ".NS"
+        st.session_state.ticker = val
+        st.session_state.us_search_input = ""
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
 
-    # ══ ACTIVE TRADES — top, always visible ══════════════════════════════════
-    @st.fragment(run_every=10)
-    def sidebar_active_trades():
-        seen, unique = set(), []
-        for sym in ALL_TICKERS + [st.session_state.ticker]:
-            t = get_open_trade(sym, st.session_state.tf)
-            if t and t["id"] not in seen:
-                seen.add(t["id"])
-                unique.append(t)
-
-        if not unique:
-            return
-
-        st.markdown("""
-        <div style="font-size:0.7rem;font-weight:700;color:#6b7280;
-             text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">
-          ⚡ Active Trades
-        </div>""", unsafe_allow_html=True)
-
-        for t in unique:
-            lp  = get_live_price(t["ticker"])["price"]
-            d   = 1 if t["direction"] == "LONG" else -1
-            pnl = (lp - t["entry_price"]) / t["entry_price"] * 100 * d if lp > 0 else 0
-            pnl_usd = (lp - t["entry_price"]) * d
-            pc  = "#16a34a" if pnl >= 0 else "#dc2626"
-            bg  = "#f0fff4" if pnl >= 0 else "#fff5f5"
-            bc  = "#22c55e" if pnl >= 0 else "#ef4444"
-            tag = "▲ LONG" if d == 1 else "▼ SHORT"
-            tag_c = "#16a34a" if d == 1 else "#dc2626"
-            hit = maybe_auto_close(t["id"], lp) if lp > 0 else None
-
-            st.markdown(f"""
-            <div style="background:{bg};border-left:4px solid {bc};
-                 border-radius:8px;padding:10px 12px;margin-bottom:6px;">
-              <div style="display:flex;justify-content:space-between;align-items:baseline;">
-                <span style="font-weight:800;font-size:0.92rem;color:#111827;">{t['ticker']}</span>
-                <span style="font-weight:900;font-size:1.05rem;color:{pc};">{pnl:+.2f}%</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;margin-top:2px;">
-                <span style="font-size:0.7rem;font-weight:700;color:{tag_c};">{tag}</span>
-                <span style="font-size:0.7rem;color:{pc};font-weight:600;">${pnl_usd:+,.2f}</span>
-              </div>
-              <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:0.72rem;color:#374151;">
-                <span>In&nbsp;<b>${t['entry_price']:,.2f}</b></span>
-                <span>Now&nbsp;<b>${lp:,.2f}</b></span>
-              </div>
-              <div style="display:flex;justify-content:space-between;margin-top:2px;font-size:0.68rem;">
-                <span style="color:#dc2626;">SL&nbsp;${t['sl_price']:,.2f}</span>
-                <span style="color:#16a34a;">TP&nbsp;${t['tp_price']:,.2f}</span>
-              </div>
-            </div>""", unsafe_allow_html=True)
-
-
-        st.divider()
-
-    # sidebar_active_trades()
-
-    # ══ Symbol search & picker ════════════════════════════════════════════════
-    st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
-         text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
-      Symbol
-    </div>""", unsafe_allow_html=True)
-
-    search_val = st.text_input("", value=st.session_state.ticker,
-                               placeholder="BTC-USD, AAPL, EURUSD=X…",
-                               label_visibility="collapsed")
-
-    # Inline suggestions while typing
-    if search_val and search_val.upper() != st.session_state.ticker:
-        matches = [t for t in ALL_TICKERS if search_val.upper() in t][:6]
-        if matches:
-            cols = st.columns(2)
-            for i, m in enumerate(matches):
-                if cols[i%2].button(m, key=f"s_{m}", use_container_width=True):
-                    st.session_state.ticker = m
-                    st.rerun()
-        elif len(search_val) >= 2:
-            # User typed custom symbol not in list — accept on Enter
-            if st.button(f"Load  {search_val.upper()}", use_container_width=True, type="primary"):
-                st.session_state.ticker = search_val.upper()
-                st.rerun()
-
-    # Popular picker
-    for category, tickers in POPULAR.items():
-        with st.expander(category, expanded=(category in ("Crypto", "Metals"))):
-            cols = st.columns(2)
-            for i, t in enumerate(tickers):
-                is_active = (t == st.session_state.ticker)
-                if cols[i%2].button(t, key=f"p_{t}", use_container_width=True,
-                                    type="primary" if is_active else "secondary"):
-                    st.session_state.ticker = t
-                    st.rerun()
-
-    st.divider()
-
-    # ══ BYBIT DEMO TRADING ═══════════════════════════════════════════════════
+    # ══ BYBIT DEMO TRADING (Top Left) ════════════════════════════════════════
     if is_configured():
         st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
              text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">
@@ -324,13 +312,50 @@ with st.sidebar:
         st.session_state.bybit_auto_trade = True
         st.markdown("""
         <div style="background:#f0fff4;border:1px solid #22c55e;border-radius:8px;
-             padding:10px 12px;font-size:0.78rem;color:#15803d;">
+             padding:10px 12px;font-size:0.78rem;color:#15803d;margin-bottom:12px;">
           <b>⚡ Auto-Trade: ALWAYS ON</b><br>
-          10% of balance × 2× leverage per signal.<br>
-          Qty auto-calculated at entry time.
+          10% of balance × 2× leverage per signal.
         </div>""", unsafe_allow_html=True)
 
         st.divider()
+
+    # ══ Symbol search & picker ════════════════════════════════════════════════
+    # ══ Global / US Search ═══════════════════════════════════════════════════
+    st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
+         text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
+      🔍 Global / US Market Search
+    </div>""", unsafe_allow_html=True)
+    
+    us_val = st.text_input("US Search",
+                           placeholder="e.g. BTC-USDT, AAPL, GC=F",
+                           label_visibility="collapsed", key="us_search_input",
+                           on_change=on_us_search)
+
+    # ══ Indian Market Search ═════════════════════════════════════════════════
+    st.markdown("""<div style="font-size:0.7rem;font-weight:700;color:#6b7280;
+         text-transform:uppercase;letter-spacing:1px;margin-top:8px;margin-bottom:4px;">
+      🇮🇳 Indian Market Search (NSE)
+    </div>""", unsafe_allow_html=True)
+    
+    ind_val = st.text_input("Ind Search",
+                            placeholder="e.g. RELIANCE, TCS, TATAMOTORS",
+                            label_visibility="collapsed", key="ind_search_input",
+                            on_change=on_ind_search)
+
+    # Popular picker
+    for category, tickers in POPULAR.items():
+        with st.expander(category, expanded=(category in ("Crypto", "Metals"))):
+            cols = st.columns(2)
+            for i, t in enumerate(tickers):
+                is_active = (t == st.session_state.ticker)
+                lbl = DISPLAY_NAMES.get(t, t)
+                cols[i%2].button(lbl, key=f"p_{t}", use_container_width=True,
+                                 type="primary" if is_active else "secondary",
+                                 on_click=set_active_ticker, args=(t,))
+
+    st.divider()
+
+    # (Duplicate Bybit panel removed from here and moved to the top of the sidebar)
 
     timeframe = st.selectbox("Timeframe", ["1m","5m","15m","30m","1h","4h","1d","1w"],
                              index=6, key="tf_select")
@@ -365,41 +390,53 @@ if (not needs_load and not auto_opt and st.session_state.df is not None):
         st.session_state.opt_tp      = tp_pct
         st.session_state.backtest_key = manual_bt_key
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Signal & Chart", "🧪 Backtest", "💬 Chat", "🎯 Track", "🟡 Bybit"])
+if needs_load:
+    st.session_state.loaded_key = current_key
+    try:
+        with st.spinner(f"Loading {ticker} {timeframe}…"):
+            df_raw = fetch_ohlcv(ticker, interval=timeframe)
+            oi     = fetch_open_interest(ticker, interval=timeframe)
+            df     = generate_signals(df_raw, oi_series=oi if not oi.empty else None)
+        st.session_state.df = df
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SIGNAL + CHART TAB
-# ═══════════════════════════════════════════════════════════════════════════════
-with tab1:
-    if needs_load:
-        st.session_state.loaded_key = current_key
-        try:
-            with st.spinner(f"Loading {ticker} {timeframe}…"):
-                df_raw = fetch_ohlcv(ticker, interval=timeframe)
-                oi     = fetch_open_interest(ticker, interval=timeframe)
-                df     = generate_signals(df_raw, oi_series=oi if not oi.empty else None)
-            st.session_state.df = df
+        if auto_opt:
+            with st.spinner("Optimizing SL/TP…"):
+                opt = optimize(df)
+            if opt["result"]:
+                new_sl = opt["params"]["stop_loss_pct"]
+                new_tp = opt["params"]["take_profit_pct"]
+                st.session_state.opt_sl       = new_sl
+                st.session_state.opt_tp       = new_tp
+                st.session_state.result       = opt["result"]
+                st.session_state.backtest_key = f"{ticker}|{timeframe}|{new_sl}|{new_tp}"
+        else:
+            st.session_state.opt_sl    = sl_pct
+            st.session_state.opt_tp    = tp_pct
+            st.session_state.result    = run_backtest(df, sl_pct, tp_pct)
+            st.session_state.backtest_key = f"{ticker}|{timeframe}|{sl_pct}|{tp_pct}"
+    except Exception as e:
+        st.error(f"Could not load **{ticker}**: {e}")
+        st.info("Try: BTC-USD, ETH-USD, AAPL, TSLA, EURUSD=X, GC=F")
 
-            if auto_opt:
-                with st.spinner("Optimizing SL/TP…"):
-                    opt = optimize(df)
-                if opt["result"]:
-                    new_sl = opt["params"]["stop_loss_pct"]
-                    new_tp = opt["params"]["take_profit_pct"]
-                    st.session_state.opt_sl       = new_sl
-                    st.session_state.opt_tp       = new_tp
-                    st.session_state.result       = opt["result"]
-                    st.session_state.backtest_key = f"{ticker}|{timeframe}|{new_sl}|{new_tp}"
-            else:
-                st.session_state.opt_sl    = sl_pct
-                st.session_state.opt_tp    = tp_pct
-                st.session_state.result    = run_backtest(df, sl_pct, tp_pct)
-                st.session_state.backtest_key = f"{ticker}|{timeframe}|{sl_pct}|{tp_pct}"
-        except Exception as e:
-            st.error(f"Could not load **{ticker}**: {e}")
-            st.info("Try: BTC-USD, ETH-USD, AAPL, TSLA, EURUSD=X, GC=F")
+col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+with col_t1:
+    if st.button("📊 Signal & Chart", type="primary" if st.session_state.active_tab == "Signal & Chart" else "secondary", use_container_width=True):
+        st.session_state.active_tab = "Signal & Chart"
+        st.rerun()
+with col_t2:
+    if st.button("🧪 Backtest", type="primary" if st.session_state.active_tab == "Backtest" else "secondary", use_container_width=True):
+        st.session_state.active_tab = "Backtest"
+        st.rerun()
+with col_t3:
+    if st.button("🎯 Track", type="primary" if st.session_state.active_tab == "Track" else "secondary", use_container_width=True):
+        st.session_state.active_tab = "Track"
+        st.rerun()
+with col_t4:
+    if st.button("🟡 Bybit", type="primary" if st.session_state.active_tab == "Bybit" else "secondary", use_container_width=True):
+        st.session_state.active_tab = "Bybit"
+        st.rerun()
 
+if st.session_state.active_tab == "Signal & Chart":
     if st.session_state.df is not None:
         df         = st.session_state.df
         last       = df.iloc[-1]
@@ -507,9 +544,9 @@ with tab1:
                 chg_color = "#16a34a" if chg >= 0 else "#dc2626"
                 st.markdown(f"""<div class="price-box">
                   <div style="font-size:0.72rem;color:#6b7280;"><span class="live-dot"></span> &nbsp;LIVE &nbsp;·&nbsp; {current_ticker}</div>
-                  <div style="font-size:2rem;font-weight:900;color:#111827;margin-top:6px;">${p:,.2f}</div>
-                  <div style="color:{chg_color};font-size:0.9rem;margin-top:4px;">{'+' if chg>=0 else ''}{chg:.2f}% today</div>
-                  <div style="font-size:0.65rem;color:#9ca3af;margin-top:4px;">Updates every 15s</div>
+                  <div style="font-size:1.4rem;font-weight:900;color:#111827;margin-top:2px;">${p:,.2f}</div>
+                  <div style="color:{chg_color};font-size:0.8rem;margin-top:2px;">{'+' if chg>=0 else ''}{chg:.2f}% today</div>
+                  <div style="font-size:0.6rem;color:#9ca3af;margin-top:2px;">Updates every 15s</div>
                 </div>""", unsafe_allow_html=True)
             live_price_box(ticker)
 
@@ -639,7 +676,37 @@ with tab1:
 
         st.markdown("---")
 
-        # ── TradingView Chart (Removed per user request) ──────────────────────
+        # ── TradingView Chart ─────────────────────────────────────────────────
+        st.markdown("### 📈 TradingView Chart")
+        
+        tv_sym = get_tv_symbol(ticker)
+        
+        import streamlit.components.v1 as components
+        components.html(f"""
+        <div id="tv_main" style="height:650px;"></div>
+        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+        <script type="text/javascript">
+        new TradingView.widget({{
+          "autosize": true,
+          "symbol": "{tv_sym}",
+          "interval": "D",
+          "timezone": "Etc/UTC",
+          "theme": "light",
+          "style": "1",
+          "locale": "en",
+          "toolbar_bg": "#ffffff",
+          "allow_symbol_change": true,
+          "withdateranges": true,
+          "hide_side_toolbar": false,
+          "studies": ["RSI@tv-basicstudies","MACD@tv-basicstudies","BB@tv-basicstudies"],
+          "container_id": "tv_main",
+          "save_image": false,
+          "show_popup_button": false,
+          "popup_width": "1000",
+          "popup_height": "650"
+        }});
+        </script>
+        """, height=650)
 
     else:
         st.markdown("""
@@ -654,7 +721,7 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════════════════════
 # BACKTEST TAB
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab2:
+elif st.session_state.active_tab == "Backtest":
     result = st.session_state.result
     if result and st.session_state.df is not None:
         df_full = st.session_state.df
@@ -815,57 +882,7 @@ with tab2:
 
         st.markdown("---")
 
-        # ── Section 1: Bybit Live Positions ──────────────────────────────────
-        if is_configured():
-            st.markdown("### 🟡 Bybit Live Positions")
-            bybit_pos = get_positions()
-            if bybit_pos:
-                pos_rows = []
-                for p in bybit_pos:
-                    pnl_pct = (p["mark_price"] - p["entry_price"]) / p["entry_price"] * 100
-                    if p["side"] == "Sell":
-                        pnl_pct = -pnl_pct
-                    pos_rows.append({
-                        "Symbol":    p["symbol"],
-                        "Side":      "🟢 LONG" if p["side"] == "Buy" else "🔴 SHORT",
-                        "Size":      p["size"],
-                        "Entry $":   f"${p['entry_price']:,.4f}",
-                        "Mark $":    f"${p['mark_price']:,.4f}",
-                        "PnL $":     f"{'+' if p['unrealised_pnl']>=0 else ''}{p['unrealised_pnl']:.2f}",
-                        "PnL %":     f"{pnl_pct:+.2f}%",
-                        "SL $":      f"${p['sl']:,.4f}" if p['sl'] > 0 else "—",
-                        "TP $":      f"${p['tp']:,.4f}" if p['tp'] > 0 else "—",
-                        "Leverage":  f"{p['leverage']:.0f}×",
-                    })
-                st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, height=200)
-            else:
-                st.caption("No open Bybit positions.")
-
-            # ── Bybit Past Trades ─────────────────────────────────────────────
-            st.markdown("### 📒 Bybit Past Trades")
-            history = get_trade_history(limit=30)
-            if history:
-                hist_rows_b = []
-                for h in history:
-                    ts = h["created_at"]
-                    try:
-                        ts = pd.to_datetime(int(ts), unit="ms").strftime("%Y-%m-%d %H:%M")
-                    except Exception:
-                        ts = str(ts)[:16]
-                    hist_rows_b.append({
-                        "Time":    ts,
-                        "Symbol":  h["symbol"],
-                        "Side":    "🟢 LONG" if h["side"] == "Buy" else "🔴 SHORT",
-                        "Qty":     h["qty"],
-                        "Entry $": f"${h['entry']:,.4f}",
-                        "Exit $":  f"${h['exit']:,.4f}",
-                        "PnL $":   f"{'+' if h['pnl']>=0 else ''}{h['pnl']:.4f}",
-                        "Result":  "✅ WIN" if h["won"] else "❌ LOSS",
-                    })
-                st.dataframe(pd.DataFrame(hist_rows_b), use_container_width=True, height=250)
-            else:
-                st.caption("No past Bybit trades yet — trades appear here after they close.")
-            st.markdown("---")
+        # (Bybit live positions and history removed per user request)
 
         # ── Section 2: Real signal trades from DB ─────────────────────────────
         st.markdown("### 🔴 My Trades (Real Signals)")
@@ -931,30 +948,7 @@ with tab2:
 # ═══════════════════════════════════════════════════════════════════════════════
 # CHAT TAB
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab3:
-    for msg in st.session_state.msgs:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    prompt = st.chat_input("Ask about signals, stop loss, take profit, indicators…")
-    if prompt:
-        st.session_state.msgs.append({"role":"user","content":prompt})
-        ctx = ""
-        if st.session_state.df is not None:
-            last = st.session_state.df.iloc[-1]
-            sig  = int(last["signal"])
-            ctx  = f"Signal:{'LONG' if sig==1 else 'SHORT' if sig==-1 else 'NONE'}. Score:{last['score']:.2f}. RSI:{last['rsi']:.0f}. ADX:{last['adx']:.0f}."
-        if st.session_state.result:
-            r = st.session_state.result
-            ctx += f" WinRate:{r.win_rate:.1f}%. ProfitFactor:{r.profit_factor:.2f}."
-        reply = chat_reply(prompt, ctx)
-        st.session_state.msgs.append({"role":"assistant","content":reply})
-        st.rerun()
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TRACK TAB
-# ═══════════════════════════════════════════════════════════════════════════════
-with tab4:
+elif st.session_state.active_tab == "Track":
     st.markdown("## 🎯 Track & Auto-Trade")
     st.caption("Add up to 10 coins. Any signal fires a Bybit order automatically — same as the main tab.")
 
@@ -966,8 +960,8 @@ with tab4:
     st.markdown("#### ➕ Add Coins to Track")
     tracked_syms = {w["ticker"] for w in watchlist}
 
-    crypto_coins = ["BTC-USD","ETH-USD","SOL-USD","BNB-USD","XRP-USD",
-                    "ADA-USD","DOGE-USD","AVAX-USD","MATIC-USD","DOT-USD"]
+    crypto_coins = ["BTC-USDT","ETH-USDT","SOL-USDT","BNB-USDT","XRP-USDT",
+                    "ADA-USDT","DOGE-USDT","AVAX-USDT","MATIC-USDT","DOT-USDT"]
     cols_add = st.columns(5)
     for i, sym in enumerate(crypto_coins):
         already = sym in tracked_syms
@@ -1027,52 +1021,13 @@ with tab4:
                 tf  = w["timeframe"]
                 key = f"{sym}|{tf}"
 
-                sig_val, score_s, price_s, direction = 0, 0.0, 0.0, ""
-                err = None
-                try:
-                    oi_s   = fetch_open_interest(sym, interval=tf)
-                    df_s   = generate_signals(fetch_ohlcv(sym, interval=tf),
-                                              oi_series=oi_s if not oi_s.empty else None)
-                    last_s = df_s.iloc[-1]
-                    sig_val   = int(last_s["signal"])
-                    score_s   = float(last_s["score"])
-                    lp_s      = get_live_price(sym)["price"]
-                    price_s   = lp_s if lp_s > 0 else float(last_s["close"])
-                    used_sl_t = st.session_state.opt_sl
-                    used_tp_t = st.session_state.opt_tp
-                except Exception as e:
-                    err = str(e)
+                sig_val = int(w.get("last_signal", 0))
+                score_s = float(w.get("last_score", 0.0))
+                price_s = float(w.get("last_price", 0.0))
+                err = w.get("last_error")
 
-                # ── Auto-trade on signal ──────────────────────────────────────
-                bybit_status = ""
-                if not err and sig_val != 0 and price_s > 0 and is_configured() and get_bybit_symbol(sym):
-                    direction = "LONG" if sig_val == 1 else "SHORT"
-                    if direction == "LONG":
-                        sl_p = price_s * (1 - used_sl_t / 100)
-                        tp_p = price_s * (1 + used_tp_t / 100)
-                    else:
-                        sl_p = price_s * (1 + used_sl_t / 100)
-                        tp_p = price_s * (1 - used_tp_t / 100)
-
-                    _, is_new = open_trade(sym, tf, direction, price_s,
-                                           sl_p, tp_p, used_sl_t, used_tp_t, score_s)
-                    order_key = f"{sym}|{direction}|{price_s:.4f}"
-                    prev_key  = st.session_state.track_last_signal.get(key)
-
-                    if is_new and prev_key != order_key:
-                        qty = calc_qty(sym, price_s, balance_pct=0.10, leverage=2)
-                        if qty > 0:
-                            res = place_order(sym, direction, qty, sl_p, tp_p, leverage=2)
-                            st.session_state.track_last_signal[key] = order_key
-                            if res["ok"]:
-                                bybit_status = "order_placed"
-                                st.toast(f"{'✅' if direction=='LONG' else '🔴'} Bybit {direction} — {sym} qty {qty:.4f}", icon="🟢" if direction=="LONG" else "🔴")
-                            else:
-                                bybit_status = f"error: {res['error']}"
-                        else:
-                            bybit_status = "qty_zero"
-                    else:
-                        bybit_status = "already_tracked"
+                if price_s == 0.0 and not err:
+                    err = "Scanning... (updates every 60s)"
 
                 # ── Render card ───────────────────────────────────────────────
                 if err:
@@ -1099,15 +1054,7 @@ with tab4:
                         pnl_col = "#16a34a" if pnl_pct >= 0 else "#dc2626"
                         trade_badge = f'<span style="font-size:0.7rem;background:{d_col}22;color:{d_col};border-radius:4px;padding:2px 6px;font-weight:700;">⏳ {d_dir} {pnl_pct:+.2f}%</span>'
 
-                bybit_badge = ""
-                if bybit_status == "order_placed":
-                    bybit_badge = '<span style="font-size:0.68rem;background:#f0fff4;color:#16a34a;border-radius:4px;padding:2px 6px;font-weight:700;">✅ Bybit order placed</span>'
-                elif bybit_status == "already_tracked":
-                    bybit_badge = '<span style="font-size:0.68rem;color:#6b7280;">already in position</span>'
-                elif bybit_status.startswith("error"):
-                    bybit_badge = f'<span style="font-size:0.68rem;color:#dc2626;">{bybit_status}</span>'
-
-                col_card, col_rm = st.columns([11, 1])
+                col_card, col_view, col_rm = st.columns([9, 2, 1])
                 with col_card:
                     st.markdown(f"""
                     <div style="background:{bg};border-left:4px solid {bc};border-radius:10px;
@@ -1125,9 +1072,13 @@ with tab4:
                       <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.78rem;color:#374151;">
                         <span>Price &nbsp;<b>{price_fmt}</b></span>
                         <span>Score &nbsp;<b style="color:{sig_color};">{score_s:+.2f}</b></span>
-                        <span>{bybit_badge}</span>
+                        <span></span>
                       </div>
                     </div>""", unsafe_allow_html=True)
+                with col_view:
+                    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+                    st.button("🔎 View", key=f"tview_{sym}_{tf}", use_container_width=True, help="Load into main chart",
+                              on_click=load_tracked_coin, args=(sym, tf))
                 with col_rm:
                     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
                     if st.button("✕", key=f"trm_{sym}_{tf}", help=f"Remove {sym}"):
@@ -1180,7 +1131,7 @@ with tab4:
 # ═══════════════════════════════════════════════════════════════════════════════
 # BYBIT TAB
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab5:
+elif st.session_state.active_tab == "Bybit":
     st.markdown("## 🟡 Bybit Demo Trading")
 
     if not is_configured():

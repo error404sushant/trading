@@ -4,8 +4,10 @@ Enforces minimum R:R of 1.5 and minimum 10 trades.
 """
 import itertools
 from backtest.engine import run_backtest
+import streamlit as st
 
 
+@st.cache_data(show_spinner=False)
 def optimize(df):
     sl_values = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
     tp_values = [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0]

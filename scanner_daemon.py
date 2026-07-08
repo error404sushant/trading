@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.fetcher import fetch_ohlcv, get_live_price, fetch_open_interest
 from data.trade_store import open_trade, get_open_trade, init_db
-from data.screener_store import init_screener, get_watchlist
+from data.screener_store import init_screener, get_watchlist, update_watchlist_status
 from data.bybit_client import is_configured, place_order, get_bybit_symbol, calc_qty
 from indicators.signals import generate_signals
 
@@ -42,6 +42,7 @@ while True:
                 oi = fetch_open_interest(yf_sym, interval=tf)
                 df = generate_signals(fetch_ohlcv(yf_sym, interval=tf), oi_series=oi if not oi.empty else None)
                 if df.empty:
+                    update_watchlist_status(sym, 0.0, 0, 0.0, error="Empty OHLCV data")
                     continue
                 last_row = df.iloc[-1]
                 sig = int(last_row["signal"])
@@ -50,6 +51,9 @@ while True:
                 # Check live price
                 live = get_live_price(yf_sym)
                 price = live["price"] if live["price"] > 0 else float(last_row["close"])
+                
+                # Update cache in DB
+                update_watchlist_status(sym, price, sig, score, error=None)
                 
                 # Standard parameters for background trading
                 used_sl = 2.0
@@ -61,8 +65,8 @@ while True:
                     # Prevent double order placement in same session
                     order_key = f"{sym}|{direction}|{price:.2f}"
                     if last_signal_keys.get(key) == order_key:
-                        continue
-                        
+                         continue
+                         
                     # Also check DB to make sure we don't have an open trade
                     db_trade = get_open_trade(yf_sym, tf)
                     if db_trade:
@@ -92,6 +96,7 @@ while True:
                             print(f"❌ Calculated quantity was zero for {sym}")
             except Exception as e:
                 print(f"Error scanning {sym}: {e}")
+                update_watchlist_status(sym, 0.0, 0, 0.0, error=str(e))
                 
     except Exception as e:
         print(f"Daemon loop error: {e}")

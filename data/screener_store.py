@@ -33,6 +33,24 @@ def init_screener():
             price     REAL,
             fired_at  TEXT NOT NULL
         )""")
+        # Add caching columns for fast UI loading
+        for col, col_type in [("last_price", "REAL DEFAULT 0.0"), 
+                              ("last_signal", "INTEGER DEFAULT 0"), 
+                              ("last_score", "REAL DEFAULT 0.0"), 
+                              ("last_error", "TEXT")]:
+            try:
+                con.execute(f"ALTER TABLE screener_watchlist ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
+
+def update_watchlist_status(ticker: str, price: float, signal: int, score: float, error: str = None):
+    init_screener()
+    with _conn() as con:
+        con.execute(
+            "UPDATE screener_watchlist SET last_price=?, last_signal=?, last_score=?, last_error=? WHERE ticker=?",
+            (price, signal, score, error, ticker.upper())
+        )
 
 
 def add_ticker(ticker: str, timeframe: str = "1d"):

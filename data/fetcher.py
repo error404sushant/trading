@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import requests
+from cachetools.func import ttl_cache
 
 
 def get_live_price(ticker: str) -> dict:
@@ -46,6 +47,7 @@ def get_live_price(ticker: str) -> dict:
         return {"price": 0.0, "change_pct": 0.0, "prev_close": 0.0}
 
 
+@ttl_cache(maxsize=128, ttl=60)
 def fetch_ohlcv(ticker: str, interval: str = "1d", period: str = "2y") -> pd.DataFrame:
     """Fetch OHLCV data for any ticker via Yahoo Finance."""
     if ticker.endswith("-USDT"):
@@ -55,14 +57,14 @@ def fetch_ohlcv(ticker: str, interval: str = "1d", period: str = "2y") -> pd.Dat
         "5m": ("60d", "5m"),
         "15m": ("60d", "15m"),
         "30m": ("60d", "30m"),
-        "1h": ("730d", "1h"),
-        "4h": ("730d", "1h"),  # resample from 1h
-        "1d": ("max", "1d"),
-        "1w": ("max", "1wk"),
-        "1M": ("max", "1mo"),
+        "1h": ("90d", "1h"),
+        "4h": ("180d", "1h"),  # resample from 1h
+        "1d": ("2y", "1d"),
+        "1w": ("5y", "1wk"),
+        "1M": ("10y", "1mo"),
     }
 
-    yf_period, yf_interval = interval_map.get(interval, ("max", "1d"))
+    yf_period, yf_interval = interval_map.get(interval, ("2y", "1d"))
     tk = yf.Ticker(ticker)
     df = tk.history(period=yf_period, interval=yf_interval, auto_adjust=True)
 
@@ -96,6 +98,7 @@ _INTERVAL_MAP_BINANCE = {
 }
 
 
+@ttl_cache(maxsize=128, ttl=60)
 def fetch_open_interest(ticker: str, interval: str = "1d", limit: int = 500) -> pd.Series:
     """
     Fetch historical Open Interest from Binance Futures API.
