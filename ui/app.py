@@ -142,14 +142,20 @@ window.addEventListener('load', function() {
 
 st.markdown("""
 <style>
-/* Seamless Neumorphic Header to keep sidebar toggle native and visible */
+/* Seamless Neumorphic Header to keep layout native */
 [data-testid="stHeader"] { 
     background-color: #e0e5ec !important; 
 }
 /* Hide the top right toolbar (Deploy, Options) */
 [data-testid="stToolbar"] { display: none !important; }
 
-/* Keep enough padding so the content doesn't overlap the header and hide the toggle button */
+/* PERMANENTLY DISABLE CLOSING THE SIDEBAR */
+[data-testid="stSidebarCollapseButton"], 
+[data-testid="stSidebarCollapsedControl"] { 
+    display: none !important; 
+}
+
+/* Keep enough padding so the content doesn't overlap the header */
 [data-testid="stAppViewContainer"] > section > div { padding-top: 3rem !important; padding-bottom: 0rem !important; }
 [data-testid="stTabs"] { margin-top: -1rem !important; padding-top: 0rem !important; }
 
