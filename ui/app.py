@@ -142,8 +142,10 @@ window.addEventListener('load', function() {
 
 st.markdown("""
 <style>
-/* Hide Streamlit header (options menu / 3 dots) and minimize top padding */
-[data-testid="stHeader"] { display: none !important; }
+/* Make header transparent but visible so the open sidebar button isn't hidden */
+[data-testid="stHeader"] { background-color: transparent !important; box-shadow: none !important; }
+/* Hide only the top right toolbar (Deploy, Options) */
+[data-testid="stToolbar"] { display: none !important; }
 [data-testid="stAppViewContainer"] > section > div { padding-top: 0rem !important; padding-bottom: 0rem !important; }
 .main .block-container { padding-top: 0.2rem !important; padding-bottom: 0rem !important; margin-top: 0rem !important; }
 [data-testid="stTabs"] { margin-top: 0rem !important; padding-top: 0rem !important; }
