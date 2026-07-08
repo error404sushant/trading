@@ -148,9 +148,18 @@ st.markdown("""
 .main .block-container { padding-top: 0.2rem !important; padding-bottom: 0rem !important; margin-top: 0rem !important; }
 [data-testid="stTabs"] { margin-top: 0rem !important; padding-top: 0rem !important; }
 
-/* Light theme overrides */
-[data-testid="stAppViewContainer"] { background:#ffffff; }
-[data-testid="stSidebar"] { background:#f8f9fc; border-right:1px solid #e0e4ef; }
+/* 🔵 NEUMORPHISM GLOBAL BACKGROUND 🔵 */
+[data-testid="stAppViewContainer"], [data-testid="stSidebar"] { 
+    background-color: #e0e5ec !important; 
+}
+[data-testid="stSidebar"] { 
+    border-right: none !important; 
+    box-shadow: 10px 0px 15px -5px rgba(163,177,198,0.3);
+}
+
+/* Base text color to ensure readability */
+* { color: #4a5568; }
+h1, h2, h3, h4, h5, h6, strong, b { color: #2d3748 !important; }
 
 /* Silent auto-refresh — no fade/grey during fragment reruns */
 [data-stale="true"] { opacity: 1 !important; transition: none !important; }
@@ -158,37 +167,51 @@ st.markdown("""
 [data-testid="stSpinner"] { display: none !important; }
 section[data-testid="stSidebar"] > div { padding-top:1rem; }
 
-/* Signal boxes */
-.sig-long  { background:#f0fff4; border:2px solid #22c55e; border-radius:8px; padding:10px; text-align:center; }
-.sig-short { background:#fff5f5; border:2px solid #ef4444; border-radius:8px; padding:10px; text-align:center; }
-.sig-none  { background:#fffbf0; border:2px solid #f59e0b; border-radius:8px; padding:10px; text-align:center; }
+/* Neumorphic base properties */
+.neu-flat {
+    background-color: #e0e5ec;
+    border-radius: 16px;
+    box-shadow: 9px 9px 16px rgb(163,177,198,0.6), -9px -9px 16px rgba(255,255,255, 0.5);
+    border: none !important;
+}
+
+/* 🟢 Signal boxes (Neumorphic) */
+.sig-long  { background:#e0e5ec; box-shadow: inset 6px 6px 10px 0 rgba(163,177,198,0.6), inset -6px -6px 10px 0 rgba(255,255,255,0.5); border-radius:12px; padding:12px; text-align:center; border:none; }
+.sig-long .sig-type { color: #16a34a !important; text-shadow: 1px 1px 2px rgba(22,163,74,0.2); }
+
+.sig-short { background:#e0e5ec; box-shadow: inset 6px 6px 10px 0 rgba(163,177,198,0.6), inset -6px -6px 10px 0 rgba(255,255,255,0.5); border-radius:12px; padding:12px; text-align:center; border:none; }
+.sig-short .sig-type { color: #dc2626 !important; text-shadow: 1px 1px 2px rgba(220,38,38,0.2); }
+
+.sig-none  { background:#e0e5ec; box-shadow: inset 6px 6px 10px 0 rgba(163,177,198,0.6), inset -6px -6px 10px 0 rgba(255,255,255,0.5); border-radius:12px; padding:12px; text-align:center; border:none; }
+.sig-none .sig-type { color: #d97706 !important; }
+
 .sig-type  { font-size:1.2rem; font-weight:900; letter-spacing:1px; }
-.sig-sub   { font-size:0.72rem; color:#6b7280; margin-top:2px; }
+.sig-sub   { font-size:0.72rem; color:#718096; margin-top:2px; }
 
 /* Price box */
-.price-box { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:8px; padding:10px; text-align:center; }
-.live-dot  { display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:50%;animation:blink 1.2s infinite; }
+.price-box { background:#e0e5ec; border-radius:12px; padding:12px; text-align:center; box-shadow: 7px 7px 14px rgb(163,177,198,0.6), -7px -7px 14px rgba(255,255,255, 0.5); border:none; }
+.live-dot  { display:inline-block;width:8px;height:8px;background:#ef4444;border-radius:50%;animation:blink 1.2s infinite; box-shadow: 0 0 5px #ef4444; }
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
 /* Level cards */
-.lvl { background:#f8f9fc; border-radius:10px; padding:16px 14px; text-align:center; border:1px solid #e0e4ef; }
-.lvl-val { font-size:1.4rem; font-weight:800; }
-.lvl-lbl { font-size:0.68rem; color:#6b7280; margin-top:3px; text-transform:uppercase; letter-spacing:.5px; }
+.lvl { background:#e0e5ec; border-radius:16px; padding:18px 14px; text-align:center; box-shadow: 9px 9px 16px rgb(163,177,198,0.6), -9px -9px 16px rgba(255,255,255, 0.5); border:none; }
+.lvl-val { font-size:1.4rem; font-weight:800; color: #2d3748; }
+.lvl-lbl { font-size:0.68rem; color:#718096; margin-top:3px; text-transform:uppercase; letter-spacing:.5px; }
 .lvl-sub { font-size:0.78rem; margin-top:3px; }
 
 /* No signal box */
-.no-sig { background:#fffbf0; border:1px dashed #f59e0b; border-radius:12px; padding:36px; text-align:center; }
+.no-sig { background:#e0e5ec; box-shadow: inset 6px 6px 10px 0 rgba(163,177,198,0.6), inset -6px -6px 10px 0 rgba(255,255,255,0.5); border-radius:16px; padding:36px; text-align:center; border:none; }
 
 /* Indicator chips */
-.chip { background:#f8f9fc; border:1px solid #e0e4ef; border-radius:6px; padding:8px 10px; text-align:center; }
-.chip-val { font-size:0.9rem; font-weight:700; }
-.chip-lbl { font-size:0.65rem; color:#6b7280; margin-top:2px; }
+.chip { background:#e0e5ec; border-radius:10px; padding:10px 12px; text-align:center; box-shadow: 5px 5px 10px rgb(163,177,198,0.6), -5px -5px 10px rgba(255,255,255, 0.5); border:none; }
+.chip-val { font-size:0.9rem; font-weight:700; color: #2d3748; }
+.chip-lbl { font-size:0.65rem; color:#718096; margin-top:2px; }
 
 /* Suggestion grid */
-.sugg-btn button { font-size:0.72rem !important; padding:4px 8px !important; height:auto !important; }
+.sugg-btn button { font-size:0.72rem !important; padding:4px 8px !important; height:auto !important; border-radius: 8px !important; }
 
 /* Section headers */
-.sec-hdr { font-size:0.75rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:1px; margin:8px 0 4px; }
+.sec-hdr { font-size:0.75rem; font-weight:700; color:#718096; text-transform:uppercase; letter-spacing:1px; margin:8px 0 4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1031,13 +1054,13 @@ elif st.session_state.active_tab == "Track":
 
                 # ── Render card ───────────────────────────────────────────────
                 if err:
-                    sig_label, sig_color, bg, bc = "⚠️ Error", "#f59e0b", "#fffbf0", "#f59e0b"
+                    sig_label, sig_color, t_class = "⚠️ Error", "#f59e0b", "neu-flat"
                 elif sig_val == 1:
-                    sig_label, sig_color, bg, bc = "🟢 LONG",  "#16a34a", "#f0fff4", "#22c55e"
+                    sig_label, sig_color, t_class = "🟢 LONG",  "#16a34a", "neu-flat"
                 elif sig_val == -1:
-                    sig_label, sig_color, bg, bc = "🔴 SHORT", "#dc2626", "#fff5f5", "#ef4444"
+                    sig_label, sig_color, t_class = "🔴 SHORT", "#dc2626", "neu-flat"
                 else:
-                    sig_label, sig_color, bg, bc = "⚪ No Signal", "#6b7280", "#f8f9fc", "#e0e4ef"
+                    sig_label, sig_color, t_class = "⚪ No Signal", "#718096", "neu-flat"
 
                 price_fmt = f"${price_s:,.4f}" if 0 < price_s < 1 else (f"${price_s:,.2f}" if price_s >= 1 else "—")
 
@@ -1052,25 +1075,24 @@ elif st.session_state.active_tab == "Track":
                         mult = 1 if d_dir == "LONG" else -1
                         pnl_pct = (lp_now - db_t["entry_price"]) / db_t["entry_price"] * 100 * mult
                         pnl_col = "#16a34a" if pnl_pct >= 0 else "#dc2626"
-                        trade_badge = f'<span style="font-size:0.7rem;background:{d_col}22;color:{d_col};border-radius:4px;padding:2px 6px;font-weight:700;">⏳ {d_dir} {pnl_pct:+.2f}%</span>'
+                        trade_badge = f'<span style="font-size:0.7rem;background:transparent;box-shadow: inset 2px 2px 5px rgba(163,177,198,0.5), inset -2px -2px 5px rgba(255,255,255,0.5);color:{d_col};border-radius:6px;padding:4px 8px;font-weight:700;">⏳ {d_dir} {pnl_pct:+.2f}%</span>'
 
                 col_card, col_view, col_rm = st.columns([9, 2, 1])
                 with col_card:
                     st.markdown(f"""
-                    <div style="background:{bg};border-left:4px solid {bc};border-radius:10px;
-                         padding:12px 16px;margin-bottom:8px;">
+                    <div class="{t_class}" style="padding:16px 20px;margin-bottom:12px;">
                       <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div>
-                          <span style="font-size:1rem;font-weight:900;color:#111827;">{sym}</span>
-                          <span style="font-size:0.7rem;color:#6b7280;margin-left:6px;">{tf}</span>
+                          <span style="font-size:1.1rem;font-weight:900;color:#2d3748;">{sym}</span>
+                          <span style="font-size:0.75rem;color:#718096;margin-left:6px;">{tf}</span>
                           &nbsp;&nbsp;{trade_badge}
                         </div>
                         <div style="text-align:right;">
-                          <span style="font-size:1.1rem;font-weight:900;color:{sig_color};">{sig_label}</span>
+                          <span style="font-size:1.1rem;font-weight:900;color:{sig_color};text-shadow: 1px 1px 2px rgba(0,0,0,0.05);">{sig_label}</span>
                         </div>
                       </div>
-                      <div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.78rem;color:#374151;">
-                        <span>Price &nbsp;<b>{price_fmt}</b></span>
+                      <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:0.85rem;color:#4a5568;">
+                        <span>Price &nbsp;<b style="color:#2d3748;">{price_fmt}</b></span>
                         <span>Score &nbsp;<b style="color:{sig_color};">{score_s:+.2f}</b></span>
                         <span></span>
                       </div>
