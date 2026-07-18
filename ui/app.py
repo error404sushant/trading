@@ -1063,6 +1063,32 @@ elif st.session_state.active_tab == "Track":
                 if price_s == 0.0 and not err:
                     err = "Scanning... (updates every 60s)"
 
+                # ── Auto-trade from tracker (fires even when not on Signal tab) ──
+                if sig_val != 0 and price_s > 0 and is_configured() and get_bybit_symbol(sym):
+                    direction = "LONG" if sig_val == 1 else "SHORT"
+                    order_key = f"{sym}|{direction}|{price_s:.2f}"
+                    if st.session_state.bybit_last_order.get(key) != order_key:
+                        db_trade = get_open_trade(sym, tf)
+                        if not db_trade:
+                            used_sl = 2.0
+                            used_tp = 4.0
+                            if direction == "LONG":
+                                sl_p = price_s * (1 - used_sl / 100)
+                                tp_p = price_s * (1 + used_tp / 100)
+                            else:
+                                sl_p = price_s * (1 + used_sl / 100)
+                                tp_p = price_s * (1 - used_tp / 100)
+                            _, is_new = open_trade(sym, tf, direction, price_s, sl_p, tp_p, used_sl, used_tp, score_s)
+                            if is_new:
+                                qty = calc_qty(sym, price_s, balance_pct=0.10, leverage=2)
+                                if qty > 0:
+                                    res = place_order(sym, direction, qty, sl_p, tp_p, leverage=2)
+                                    st.session_state.bybit_last_order[key] = order_key
+                                    if res["ok"]:
+                                        st.toast(f"✅ Bybit {direction} — {sym} qty {qty:.4f}", icon="🟢" if direction == "LONG" else "🔴")
+                                    else:
+                                        st.toast(f"❌ Bybit order failed for {sym}: {res['error']}", icon="🔴")
+
                 # ── Render card ───────────────────────────────────────────────
                 if err:
                     sig_label, sig_color, t_class = "⚠️ Error", "#f59e0b", "neu-flat"
