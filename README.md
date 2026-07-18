@@ -1,6 +1,6 @@
 # Trading Signals Platform
 
-A professional trading signal platform built with Python and Streamlit. Supports any ticker — crypto, stocks, forex, gold, oil, and more. Signals are generated using 7 technical systems plus CVD and Open Interest filters. Includes live backtesting with date range analysis, a signal screener with browser notifications, and a live TradingView chart.
+A professional trading signal platform built with Python and Streamlit. Supports any ticker — crypto, stocks, forex, gold, oil, and more. Signals are generated using 7 technical systems plus CVD and Open Interest filters. Includes live backtesting with date range analysis, a signal screener with browser notifications, a live TradingView chart, and **Bybit Demo auto-trading**.
 
 **Live App:** [trade-hunt.streamlit.app](https://trade-hunt.streamlit.app)
 
@@ -13,7 +13,9 @@ A professional trading signal platform built with Python and Streamlit. Supports
 - Applies **4 precision filters** (EMA200 trend, RSI extreme, CVD divergence, Open Interest)
 - Shows **live price** updating every 15 seconds
 - **Backtest** the strategy on any date range with full metrics
-- **Screener** — watch multiple tickers and get browser notifications when a signal fires
+- **Track tab** — watch up to 10 coins, auto-scans every 60s, fires Bybit orders automatically
+- **Bybit Demo auto-trading** — places real orders on Bybit Demo account the moment a signal fires, for every tracked coin, even with the browser closed
+- **Background scanner daemon** — runs 24/7 alongside the UI, monitors all watchlist coins and places Bybit orders without needing the browser open
 - **Active trades** tracked in sidebar with live PnL
 - Works for: Crypto · Stocks · Forex · Gold · Oil · Commodities · Indices
 
@@ -36,8 +38,10 @@ Open Terminal and run:
 
 ```bash
 cd ~/Desktop/example/trading-platform
-./venv/bin/streamlit run ui/app.py --server.port 8501
+./run.sh
 ```
+
+This starts **both** the Streamlit UI and the background scanner daemon together.
 
 Then open your browser at **http://localhost:8501**
 
@@ -45,10 +49,12 @@ Then open your browser at **http://localhost:8501**
 
 ```bash
 cd ~/Desktop/example/trading-platform
-nohup ./venv/bin/streamlit run ui/app.py --server.port 8501 > /tmp/streamlit.log 2>&1 &
+nohup ./run.sh > /tmp/app.log 2>&1 &
 ```
 
-Stop it: `pkill -f "streamlit run"`
+Stop everything: `pkill -f "streamlit run" && pkill -f "scanner_daemon"`
+
+Check daemon log: `tail -f /tmp/scanner_daemon.log`
 
 ### Pull latest code from GitHub
 
@@ -203,7 +209,35 @@ Then restart Streamlit.
 
 ---
 
-### Tab 3 — Chat
+### Tab 3 — Track (Watchlist + Auto-Trade)
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Tracking 4/10 coins  ·  Scans every 60s  ·  ⚡ Auto-trade ON │
+├──────────────────────────────────────────────────────┤
+│  XRP-USD  1d   ⏳ SHORT +1.15%   Price $1.11   Score -0.33  [🔎 View] [✕] │
+│  BTC-USD  1d   ⏳ SHORT -4.56%   Price $61,863  Score +0.56  [🔎 View] [✕] │
+│  ETH-USD  1d   ⚪ No Signal      Price $1,859   Score +0.56  [🔎 View] [✕] │
+├──────────────────────────────────────────────────────┤
+│  📋 Trades Taken                                     │
+│  Result  Coin     Type    Entry              PnL %        SL $        TP $  │
+│  ⏳OPEN  XRP-USD  🔴SHORT  2026-07-14 22:03  +1.15%(live) $1.13      $1.06  │
+│  ⏳OPEN  BTC-USD  🔴SHORT  2026-07-09 01:50  -4.56%(live) $63,101    $59,389│
+└──────────────────────────────────────────────────────┘
+```
+
+**How it works:**
+1. Add up to 10 coins to the watchlist
+2. The scanner checks every 60 seconds for LONG/SHORT signals
+3. When a signal fires, it **automatically places a Bybit order** — no browser interaction needed
+4. The background daemon (`scanner_daemon.py`) also places orders 24/7 even if the browser is closed
+5. All trades logged in "Trades Taken" with live PnL
+
+**Order parameters:** 10% of balance · 2× leverage · SL 2% · TP 4%
+
+---
+
+### Tab 4 — Chat
 
 Ask questions about the current signal in plain English:
 
@@ -226,7 +260,28 @@ Ask about: **signal, long, short, stop loss, take profit, RSI, MACD, EMA, ADX, w
 
 ---
 
-### Tab 4 — Screener
+### Tab 5 — Bybit Demo Trading
+
+```
+┌──────────────────────────────────────────────────────┐
+│  🟡 Bybit Demo Trading                               │
+│  USDT Balance  $971.80   Unrealised PnL: +0.00       │
+│  ⚡ Auto-Trade: ALWAYS ON                             │
+│  10% of balance × 2× leverage per signal             │
+├──────────────────────────────────────────────────────┤
+│  Open Positions                                      │
+│  XRPUSDT  SHORT  Size 180  Entry $1.11  PnL +$2.07  │
+│  BTCUSDT  SHORT  Size 0.003  Entry $61,863  PnL -$12 │
+└──────────────────────────────────────────────────────┘
+```
+
+- Shows live balance and unrealised PnL
+- Lists all open positions with entry price and current PnL
+- Auto-Trade is always on — orders fire automatically when signals fire
+
+---
+
+### Tab 6 — Screener
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -355,7 +410,8 @@ The combination with the highest score becomes your recommended SL and TP.
 ```
 trading-platform/
 ├── ui/
-│   └── app.py              # Main Streamlit app
+│   └── app.py              # Main Streamlit app (Signal, Backtest, Track, Bybit, Chat tabs)
+├── scanner_daemon.py        # Background daemon — scans watchlist + places Bybit orders 24/7
 ├── indicators/
 │   └── signals.py          # Signal engine (7 systems + 4 filters)
 ├── backtest/
@@ -363,10 +419,13 @@ trading-platform/
 │   └── optimizer.py        # SL/TP grid search
 ├── data/
 │   ├── fetcher.py          # Yahoo Finance + Binance OI fetch
+│   ├── bybit_client.py     # Bybit Demo API — place/close orders, balance, positions
 │   ├── trade_store.py      # SQLite trade persistence
-│   └── screener_store.py   # Screener watchlist + alert history
+│   └── screener_store.py   # Watchlist store (used by both UI and daemon)
+├── run.sh                   # Starts both Streamlit UI and scanner daemon together
 ├── .streamlit/
 │   └── config.toml         # Theme + server config
+├── .env                     # Bybit API credentials (not committed)
 ├── CALCULATIONS.md         # Full formula documentation
 ├── requirements.txt
 └── trades.db               # Local SQLite database (auto-created)
@@ -377,10 +436,16 @@ trading-platform/
 ## FAQ
 
 **Q: Does it place real trades?**
-No. The platform shows signals only. You place trades manually on your own exchange.
+Yes — on your **Bybit Demo account**. Credentials are loaded from a `.env` file. It uses the Bybit Demo environment so no real money is at risk. Set `BYBIT_DEMO=false` in `.env` only if you want live trading.
+
+**Q: Why did the tracker show a signal but Bybit didn't take the trade?**
+Previously the Track tab only displayed signals without placing orders. This is now fixed — both the Track tab and the background `scanner_daemon.py` place Bybit orders automatically when signals fire. Always start the app via `./run.sh` so the daemon runs alongside the UI.
+
+**Q: Does the daemon need the browser open?**
+No. `scanner_daemon.py` runs as a background process and places orders 24/7 independently of the browser or Streamlit UI.
 
 **Q: Where is my data stored?**
-Everything is local — `trades.db` is a SQLite file on your machine. Nothing is sent anywhere.
+Everything is local — `trades.db` is a SQLite file on your machine. Nothing is sent anywhere except Bybit API calls.
 
 **Q: Why does OI show N/A for stocks?**
 Open Interest data is only available for crypto futures via Binance API. For stocks, forex, and commodities it shows N/A — the other 6 systems still work normally.
